@@ -20,6 +20,8 @@ spec:
       labels:
         app: api-gateway
     spec:
+      imagePullSecrets:
+        - name: regcred
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

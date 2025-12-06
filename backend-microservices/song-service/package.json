@@ -19,6 +19,7 @@
     "mongodb": "^5.9.2",
     "mongoose": "^7.8.7",
     "multer": "^2.0.2",
+    "prom-client": "^15.1.3",
     "recombee-api-client": "^6.0.0",
     "redis": "^4.6.0"
   },

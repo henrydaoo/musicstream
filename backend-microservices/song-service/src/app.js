@@ -7,6 +7,11 @@ import adminRoutes from "./routes/admin.route.js";
 import { clerkMiddleware } from "@clerk/express";
 import { connectRedis } from "./config/redis.js";
 import { initializeRecombee } from "./services/recombee.service.js";
+import {
+  register,
+  httpRequestDuration,
+  httpRequestTotal,
+} from "./config/metrics.js";
 
 dotenv.config();
 
@@ -17,8 +22,39 @@ app.use(cors());
 app.use(express.json());
 app.use(clerkMiddleware());
 
+// Metrics middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  const route = req.path.replace(/\/[0-9a-fA-F]{24}/g, '/:id');
+
+  const originalEnd = res.end;
+  res.end = function (...args) {
+    const duration = (Date.now() - start) / 1000;
+
+    httpRequestDuration.observe(
+      { method: req.method, route, status_code: res.statusCode },
+      duration
+    );
+
+    httpRequestTotal.inc({
+      method: req.method,
+      route,
+      status_code: res.statusCode,
+    });
+
+    originalEnd.apply(res, args);
+  };
+
+  next();
+});
+
 app.get("/health", (req, res) => {
   res.json({ status: "OK", service: "song-service" });
+});
+
+app.get("/metrics", async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
 });
 
 app.use("/songs", songRoutes);

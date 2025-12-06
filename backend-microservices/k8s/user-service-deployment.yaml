@@ -20,6 +20,8 @@ spec:
       labels:
         app: user-service
     spec:
+      imagePullSecrets:
+        - name: regcred
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
