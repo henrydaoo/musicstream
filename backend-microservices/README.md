@@ -31,6 +31,9 @@ External Services:
 • Clerk (Authentication)
 • Cloudinary (Media Storage & Transcoding)
 • Recombee (Recommendation Engine)
+
+CI/CD Pipeline:
+GitHub → Actions → Build → Test → Docker Build → DO Registry → K8s Deploy
 ```
 
 ## 📊 Database Schemas
@@ -304,13 +307,20 @@ backend-microservices/
 │   ├── Dockerfile
 │   └── package.json
 │
-├── k8s/
+├── k8s/                              # Kubernetes Manifests
 │   ├── namespace.yaml
-│   ├── secrets.yaml
+│   ├── secrets.yaml                  # ⚠️ Don't commit to Git
 │   ├── user-service-deployment.yaml
 │   ├── song-service-deployment.yaml
 │   ├── album-service-deployment.yaml
-│   └── api-gateway-deployment.yaml
+│   ├── api-gateway-deployment.yaml
+│   ├── prometheus.yaml
+│   ├── grafana.yaml
+│   ├── ingress.yaml
+│   └── letsencrypt-issuer.yaml
+│
+├── scripts/
+│   └── quick-setup.sh                # Automated setup script
 │
 ├── docker-compose.yml
 └── .env.example
@@ -376,24 +386,43 @@ cd api-gateway && npm run dev
 
 ## ☸️ Kubernetes Deployment
 
-### Prerequisites
-- Kubernetes cluster (minikube, GKE, EKS, AKS)
-- kubectl configured
-- Docker images built and pushed to registry
+### Quick Setup with Script
 
-### Deploy
+```bash
+# Make script executable
+chmod +x scripts/quick-setup.sh
 
-1. **Create namespace:**
+# Run automated setup
+./scripts/quick-setup.sh
+```
+
+The script will:
+1. Check prerequisites (kubectl, doctl)
+2. Authenticate with DigitalOcean
+3. Connect to Kubernetes cluster
+4. Create namespace and secrets
+5. Install NGINX Ingress Controller
+6. Install cert-manager for SSL
+7. Get LoadBalancer IP
+
+### Manual Deployment
+
+1. **Prerequisites:**
+   - Kubernetes cluster (DigitalOcean, GKE, EKS, AKS)
+   - kubectl configured
+   - Docker images built and pushed to registry
+
+2. **Create namespace:**
 ```bash
 kubectl apply -f k8s/namespace.yaml
 ```
 
-2. **Create secrets:**
+3. **Create secrets:**
 ```bash
 kubectl apply -f k8s/secrets.yaml
 ```
 
-3. **Deploy services:**
+4. **Deploy services:**
 ```bash
 kubectl apply -f k8s/user-service-deployment.yaml
 kubectl apply -f k8s/song-service-deployment.yaml
@@ -401,10 +430,92 @@ kubectl apply -f k8s/album-service-deployment.yaml
 kubectl apply -f k8s/api-gateway-deployment.yaml
 ```
 
-4. **Verify deployments:**
+5. **Deploy monitoring:**
 ```bash
-kubectl get pods -n music-streaming
-kubectl get svc -n music-streaming
+kubectl apply -f k8s/prometheus.yaml
+kubectl apply -f k8s/grafana.yaml
+```
+
+6. **Deploy ingress:**
+```bash
+kubectl apply -f k8s/ingress.yaml
+```
+
+7. **Verify deployments:**
+```bash
+kubectl get all -n music-stream
+kubectl get pods -n music-stream -w
+```
+
+## 🔄 CI/CD Pipeline
+
+### Automated Deployment with GitHub Actions
+
+The project includes a complete CI/CD pipeline that automatically:
+
+1. **Build & Test** - Runs tests for all services
+2. **Docker Build** - Builds Docker images in parallel
+3. **Push to Registry** - Pushes to DigitalOcean Container Registry
+4. **Deploy to K8s** - Deploys to Kubernetes cluster
+5. **Health Check** - Verifies deployment success
+6. **Auto Rollback** - Rolls back on failure
+
+### Pipeline Workflow
+
+```
+Git Push → GitHub Actions
+    ↓
+Build & Test (parallel)
+    ↓
+Docker Build & Push (parallel)
+    ↓
+Update K8s Manifests
+    ↓
+Deploy to Cluster
+    ↓
+Wait for Pods Ready
+    ↓
+Verify Health Checks
+    ↓
+✅ Success / ❌ Auto Rollback
+```
+
+### Trigger Deployment
+
+```bash
+# Commit and push to main branch
+git add .
+git commit -m "feat: your feature"
+git push origin main
+
+# Pipeline will automatically run
+# Check status at: GitHub → Actions tab
+```
+
+### Monitor Deployment
+
+```bash
+# Watch pods status
+kubectl get pods -n music-stream -w
+
+# Check rollout status
+kubectl rollout status deployment/song-service -n music-stream
+
+# View logs
+kubectl logs -f deployment/song-service -n music-stream
+```
+
+### Manual Rollback
+
+```bash
+# Rollback deployment
+kubectl rollout undo deployment/song-service -n music-stream
+
+# Rollback to specific revision
+kubectl rollout undo deployment/song-service --to-revision=2 -n music-stream
+
+# Check rollout history
+kubectl rollout history deployment/song-service -n music-stream
 ```
 
 ## 🔧 Service Communication
@@ -468,6 +579,20 @@ const songs = await callService("song", "/songs/batch", "POST", {
 - Secrets stored in Kubernetes Secrets
 - Environment variables for sensitive data
 - CORS configured for frontend origin only
+- Non-root user in containers
+- Read-only root filesystem
+
+### Security Context (Kubernetes)
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+    - ALL
+```
 
 ## 📊 Data Flow Examples
 
@@ -537,6 +662,147 @@ Each service exposes `/health`:
   ]
 }
 ```
+
+### Kubernetes Health Probes
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3002
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3002
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: 3002
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 30
+```
+
+## 📈 Monitoring & Observability
+
+### Prometheus Metrics
+
+Exposed at `/metrics` endpoint:
+- Request count
+- Request duration
+- Error rate
+- Active connections
+- Resource usage
+
+### Grafana Dashboards
+
+Access: `https://grafana.YOUR_IP.nip.io`
+
+**Available Dashboards:**
+- Service Overview
+- Request Rates
+- Response Times
+- Error Rates
+- Resource Usage (CPU, Memory)
+- Pod Status
+
+### Kubernetes Monitoring
+
+```bash
+# Check resource usage
+kubectl top nodes
+kubectl top pods -n music-stream
+
+# Check HPA status
+kubectl get hpa -n music-stream
+
+# View events
+kubectl get events -n music-stream --sort-by='.lastTimestamp'
+```
+
+## 🚀 Performance Optimization
+
+### Horizontal Pod Autoscaling
+
+**Song Service** (Heavy load):
+- Min: 1, Max: 15
+- CPU: 70%, Memory: 75%
+
+**User/Album Service** (Moderate load):
+- Min: 1, Max: 8-10
+- CPU: 70%, Memory: 80%
+
+### Resource Limits
+
+```yaml
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
+```
+
+### Caching Strategy
+
+- Redis TTL: 5-10 minutes
+- Pattern-based invalidation
+- Cache hit ratio > 80%
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Pods Not Starting:**
+```bash
+kubectl describe pod <pod-name> -n music-stream
+kubectl logs <pod-name> -n music-stream
+```
+
+**ImagePullBackOff:**
+```bash
+kubectl get events -n music-stream | grep <pod-name>
+# Check registry credentials
+kubectl get secret regcred -n music-stream
+```
+
+**Service Unavailable:**
+```bash
+kubectl get svc -n music-stream
+kubectl get endpoints -n music-stream
+# Port forward to test
+kubectl port-forward svc/song-service 3002:3002 -n music-stream
+```
+
+**High Memory Usage:**
+```bash
+kubectl top pods -n music-stream
+# Check if HPA is scaling
+kubectl get hpa -n music-stream
+```
+
+### Debug Mode
+
+Enable debug logs:
+```bash
+kubectl set env deployment/song-service LOG_LEVEL=debug -n music-stream
+```
+
+## 📚 Additional Resources
+
+- [CI/CD Setup Guide](../docs/CICD-SETUP-GUIDE.md) - Complete deployment guide
+- [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [DigitalOcean Kubernetes](https://docs.digitalocean.com/products/kubernetes/)
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
 
 ## 📝 License
 

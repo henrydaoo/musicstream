@@ -20,6 +20,8 @@ spec:
       labels:
         app: song-service
     spec:
+      imagePullSecrets:
+        - name: regcred
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

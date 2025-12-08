@@ -2,6 +2,13 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import {
+  register,
+  httpRequestDuration,
+  httpRequestTotal,
+  proxyErrors,
+  activeRequests,
+} from "./config/metrics.js";
 
 dotenv.config();
 
@@ -9,6 +16,25 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+
+// Normalize route to avoid cardinality explosion
+const normalizeRoute = (path) => {
+  return path
+    .replace(/\/[0-9a-fA-F]{24}/g, '/:id')
+    .replace(/\/[0-9]+/g, '/:id');
+};
+
+// Get target service from path
+const getTargetService = (path) => {
+  if (path.startsWith("/api/auth") || path.startsWith("/api/users") || path.startsWith("/api/admin/users")) {
+    return "user-service";
+  } else if (path.startsWith("/api/songs") || path.startsWith("/api/admin/songs")) {
+    return "song-service";
+  } else if (path.startsWith("/api/albums") || path.startsWith("/api/admin/albums")) {
+    return "album-service";
+  }
+  return "unknown";
+};
 
 app.use((req, res, next) => {
   let service = "Unknown";
@@ -37,12 +63,66 @@ app.use((req, res, next) => {
   next();
 });
 
+// Metrics middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  const route = normalizeRoute(req.path);
+  const targetService = getTargetService(req.path);
+
+  // Increment active requests
+  activeRequests.inc({ target_service: targetService });
+
+  // Log request
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${
+      req.originalUrl
+    } -> ${targetService}`
+  );
+
+  // Override res.end to capture metrics
+  const originalEnd = res.end;
+  res.end = function (...args) {
+    const duration = (Date.now() - start) / 1000;
+
+    // Record metrics
+    httpRequestDuration.observe(
+      {
+        method: req.method,
+        route,
+        status_code: res.statusCode,
+        target_service: targetService,
+      },
+      duration
+    );
+
+    httpRequestTotal.inc({
+      method: req.method,
+      route,
+      status_code: res.statusCode,
+      target_service: targetService,
+    });
+
+    // Decrement active requests
+    activeRequests.dec({ target_service: targetService });
+
+    originalEnd.apply(res, args);
+  };
+
+  next();
+});
+
 app.get("/health", (req, res) => {
   res.json({
     status: "OK",
     service: "api-gateway",
     timestamp: new Date().toISOString(),
   });
+});
+
+// Metrics endpoint
+app.get("/metrics", async (req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.end(await register.metrics());
 });
 
 app.get("/health/services", async (req, res) => {
@@ -163,7 +243,9 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`API Gateway running on port ${PORT}`);
+  console.log(`🚀 API Gateway running on port ${PORT}`);
+  console.log(`📊 Metrics available at http://localhost:${PORT}/metrics`);
+  console.log(`🏥 Health check at http://localhost:${PORT}/health`);
   console.log(
     `User Service: ${process.env.USER_SERVICE_URL || "http://localhost:3001"}`
   );
