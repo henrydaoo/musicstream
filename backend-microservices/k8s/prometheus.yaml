@@ -17,17 +17,17 @@ data:
 
       - job_name: 'user-service'
         static_configs:
-          - targets: ['user-service:80']
+          - targets: ['user-service:3001']
         metrics_path: '/metrics'
 
       - job_name: 'song-service'
         static_configs:
-          - targets: ['song-service:80']
+          - targets: ['song-service:3002']
         metrics_path: '/metrics'
 
       - job_name: 'album-service'
         static_configs:
-          - targets: ['album-service:80']
+          - targets: ['album-service:3003']
         metrics_path: '/metrics'
 
 ---
@@ -62,11 +62,11 @@ spec:
               mountPath: /prometheus
           resources:
             requests:
-              memory: "512Mi"
-              cpu: "250m"
+              memory: "64Mi"  
+              cpu: "50m"    
             limits:
-              memory: "1Gi"
-              cpu: "500m"
+              memory: "256Mi" 
+              cpu: "200m"
       volumes:
         - name: config
           configMap:
@@ -87,30 +87,3 @@ spec:
       targetPort: 9090
   selector:
     app: prometheus
-
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: prometheus-ingress
-  namespace: music-stream
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - prometheus.139.59.193.80.nip.io
-      secretName: prometheus-tls-cert
-  rules:
-    - host: prometheus.139.59.193.80.nip.io
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: prometheus
-                port:
-                  number: 9090

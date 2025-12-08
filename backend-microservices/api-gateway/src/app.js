@@ -17,6 +17,25 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
+// Normalize route to avoid cardinality explosion
+const normalizeRoute = (path) => {
+  return path
+    .replace(/\/[0-9a-fA-F]{24}/g, '/:id')
+    .replace(/\/[0-9]+/g, '/:id');
+};
+
+// Get target service from path
+const getTargetService = (path) => {
+  if (path.startsWith("/api/auth") || path.startsWith("/api/users") || path.startsWith("/api/admin/users")) {
+    return "user-service";
+  } else if (path.startsWith("/api/songs") || path.startsWith("/api/admin/songs")) {
+    return "song-service";
+  } else if (path.startsWith("/api/albums") || path.startsWith("/api/admin/albums")) {
+    return "album-service";
+  }
+  return "unknown";
+};
+
 app.use((req, res, next) => {
   let service = "Unknown";
   if (

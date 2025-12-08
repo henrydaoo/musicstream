@@ -40,8 +40,6 @@ spec:
               value: "admin"
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: "admin123"
-            - name: GF_SERVER_ROOT_URL
-              value: "https://grafana.139.59.193.80.nip.io"
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
@@ -74,30 +72,3 @@ spec:
       targetPort: 3000
   selector:
     app: grafana
-
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: grafana-ingress
-  namespace: music-stream
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - grafana.139.59.193.80.nip.io
-      secretName: grafana-tls-cert
-  rules:
-    - host: grafana.139.59.193.80.nip.io
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: grafana
-                port:
-                  number: 80
