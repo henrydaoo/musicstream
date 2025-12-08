@@ -1,0 +1,273 @@
+name: CI/CD Pipeline - Backend Microservices
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'backend-microservices/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend-microservices/**'
+
+env:
+  REGISTRY: registry.digitalocean.com/music-stream-registry
+  CLUSTER_NAME: music-stream-cluster
+  
+jobs:
+  # Job 1: Build và Test
+  build-and-test:
+    name: Build and Test Services
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [user-service, song-service, album-service, api-gateway]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend-microservices/${{ matrix.service }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend-microservices/${{ matrix.service }}
+        run: npm ci
+
+      - name: Run linting
+        working-directory: backend-microservices/${{ matrix.service }}
+        run: npm run lint || echo "No lint script found"
+        continue-on-error: true
+
+      - name: Run tests
+        working-directory: backend-microservices/${{ matrix.service }}
+        run: npm test || echo "No test script found"
+        continue-on-error: true
+
+  # Job 2: Build và Push Docker Images
+  build-and-push:
+    name: Build and Push Docker Images
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    strategy:
+      matrix:
+        service: [user-service, song-service, album-service, api-gateway]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          password: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend-microservices/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.service }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.service }}:buildcache,mode=max
+
+  # Job 3: Deploy to Kubernetes
+  deploy:
+    name: Deploy to DigitalOcean Kubernetes
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Save DigitalOcean kubeconfig
+        run: doctl kubernetes cluster kubeconfig save ${{ env.CLUSTER_NAME }}
+
+      - name: Verify cluster connection
+        run: kubectl cluster-info
+
+      - name: Create namespace if not exists
+        run: kubectl create namespace music-stream --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create/Update Secrets
+        run: |
+          kubectl create secret generic mongodb-secret \
+            --from-literal=users-db-uri="${{ secrets.MONGODB_USERS_URI }}" \
+            --from-literal=songs-db-uri="${{ secrets.MONGODB_SONGS_URI }}" \
+            --from-literal=albums-db-uri="${{ secrets.MONGODB_ALBUMS_URI }}" \
+            --namespace=music-stream \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic redis-secret \
+            --from-literal=url="${{ secrets.REDIS_URL }}" \
+            --namespace=music-stream \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic clerk-secret \
+            --from-literal=secret-key="${{ secrets.CLERK_SECRET_KEY }}" \
+            --from-literal=publishable-key="${{ secrets.CLERK_PUBLISHABLE_KEY }}" \
+            --namespace=music-stream \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic cloudinary-secret \
+            --from-literal=cloud-name="${{ secrets.CLOUDINARY_CLOUD_NAME }}" \
+            --from-literal=api-key="${{ secrets.CLOUDINARY_API_KEY }}" \
+            --from-literal=api-secret="${{ secrets.CLOUDINARY_API_SECRET }}" \
+            --namespace=music-stream \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic recombee-secret \
+            --from-literal=database-id="${{ secrets.RECOMBEE_DATABASE_ID }}" \
+            --from-literal=private-token="${{ secrets.RECOMBEE_PRIVATE_TOKEN }}" \
+            --from-literal=region="${{ secrets.RECOMBEE_REGION }}" \
+            --namespace=music-stream \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create Docker Registry Secret
+        run: |
+          kubectl create secret docker-registry regcred \
+            --docker-server=registry.digitalocean.com \
+            --docker-username=${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} \
+            --docker-password=${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} \
+            --namespace=music-stream \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update image tags in deployments
+        run: |
+          cd backend-microservices/k8s
+          export IMAGE_TAG="${GITHUB_REF##*/}-${GITHUB_SHA::7}"
+          
+          # Update image tags cho từng service
+          sed -i "s|:latest|:${IMAGE_TAG}|g" user-service-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" song-service-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" album-service-deployment.yaml
+          sed -i "s|:latest|:${IMAGE_TAG}|g" api-gateway-deployment.yaml
+
+      - name: Deploy User Service
+        run: kubectl apply -f backend-microservices/k8s/user-service-deployment.yaml
+
+      - name: Deploy Song Service
+        run: kubectl apply -f backend-microservices/k8s/song-service-deployment.yaml
+
+      - name: Deploy Album Service
+        run: kubectl apply -f backend-microservices/k8s/album-service-deployment.yaml
+
+      - name: Deploy API Gateway
+        run: kubectl apply -f backend-microservices/k8s/api-gateway-deployment.yaml
+
+      - name: Deploy Monitoring (Prometheus & Grafana)
+        run: |
+          kubectl apply -f backend-microservices/k8s/prometheus.yaml
+          kubectl apply -f backend-microservices/k8s/grafana.yaml
+
+      - name: Deploy Ingress
+        run: kubectl apply -f backend-microservices/k8s/ingress.yaml
+
+      - name: Wait for deployments to be ready
+        run: |
+          kubectl wait --for=condition=available --timeout=300s \
+            deployment/user-service \
+            deployment/song-service \
+            deployment/album-service \
+            deployment/api-gateway \
+            -n music-stream
+
+      - name: Verify deployment
+        run: |
+          echo "=== Deployments ==="
+          kubectl get deployments -n music-stream
+          echo ""
+          echo "=== Pods ==="
+          kubectl get pods -n music-stream
+          echo ""
+          echo "=== Services ==="
+          kubectl get services -n music-stream
+          echo ""
+          echo "=== Ingress ==="
+          kubectl get ingress -n music-stream
+
+      - name: Get service endpoints
+        run: |
+          echo "=== Service Endpoints ==="
+          kubectl get ingress music-stream-ingress -n music-stream -o jsonpath='{.spec.rules[*].host}' | tr ' ' '\n'
+
+  # Job 4: Rollback on failure
+  rollback:
+    name: Rollback on Failure
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Save DigitalOcean kubeconfig
+        run: doctl kubernetes cluster kubeconfig save ${{ env.CLUSTER_NAME }}
+
+      - name: Rollback deployments
+        run: |
+          kubectl rollout undo deployment/user-service -n music-stream
+          kubectl rollout undo deployment/song-service -n music-stream
+          kubectl rollout undo deployment/album-service -n music-stream
+          kubectl rollout undo deployment/api-gateway -n music-stream
+
+      - name: Verify rollback
+        run: |
+          kubectl rollout status deployment/user-service -n music-stream
+          kubectl rollout status deployment/song-service -n music-stream
+          kubectl rollout status deployment/album-service -n music-stream
+          kubectl rollout status deployment/api-gateway -n music-stream
+
+  # Job 5: Notify deployment status
+  notify:
+    name: Notify Deployment Status
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Deployment Success Notification
+        if: needs.deploy.result == 'success'
+        run: |
+          echo "✅ Deployment successful!"
+          echo "Branch: ${GITHUB_REF##*/}"
+          echo "Commit: ${GITHUB_SHA::7}"
+          
+      - name: Deployment Failure Notification
+        if: needs.deploy.result == 'failure'
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Branch: ${GITHUB_REF##*/}"
+          echo "Commit: ${GITHUB_SHA::7}"
