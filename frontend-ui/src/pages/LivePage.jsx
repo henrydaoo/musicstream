@@ -1,482 +1,669 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSocket } from "../contexts/SocketContext";
+import { useAuthStore } from "../store/useAuthStore";
 import { usePlayerStore } from "../store/usePlayerStore";
 import { useRoomStore } from "../store/useRoomStore";
-import { useAuthStore } from "../store/useAuthStore";
-import { calculateLiveState } from "../utils/liveUtils";
-import { Play, Users, LogOut, Copy, Music2, Radio, Clock, Sparkles } from "lucide-react";
+import { useSongStore } from "../store/useSongStore";
+import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { 
+  Radio, 
+  Users, 
+  LogOut,
+  RefreshCw,
+  Music,
+  Loader
+} from "lucide-react";
 
-const LivePage = () => {
+export default function LivePage() {
   const socket = useSocket();
   const { user } = useAuthStore();
-  const { queue, currentSong } = usePlayerStore(); 
+  const { songs, fetchSongs, isLoading } = useSongStore();
+  const navigate = useNavigate();
   
-  const { roomId, isHost, roomState, setRoomId, setIsHost, setRoomData, resetRoom } = useRoomStore();
-  
-  const [joinInput, setJoinInput] = useState("");
-  const [copied, setCopied] = useState(false);
+  const { 
+    roomId, 
+    isHost, 
+    playlist,
+    setRoomId, 
+    setIsHost, 
+    setRoomData, 
+    resetRoom 
+  } = useRoomStore();
 
+  const {
+    currentSong,
+    isPlaying,
+    queue,
+    currentIndex,
+    setQueue,
+    setIsPlaying,
+    clearQueue,
+  } = usePlayerStore();
+
+  const [roomIdInput, setRoomIdInput] = useState("");
+  const [selectedSongs, setSelectedSongs] = useState([]);
+  const [memberCount, setMemberCount] = useState(1);
+  const [hostName, setHostName] = useState("");
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [hostPosition, setHostPosition] = useState({ songIndex: 0, time: 0 });
+
+  // Broadcast host position to AudioPlayer via custom event
+  useEffect(() => {
+    const event = new CustomEvent("livestream-host-position", {
+      detail: hostPosition
+    });
+    window.dispatchEvent(event);
+  }, [hostPosition]);
+
+  const previousIndexRef = useRef(null);
+  const isInitializedRef = useRef(false);
+
+  // Generate random room ID
+  const generateRoomId = () => {
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
+  };
+
+  // Fetch songs on mount
+  useEffect(() => {
+    if (songs.length === 0) {
+      fetchSongs();
+    }
+  }, []);
+
+  // Get audio element from AudioPlayer
+  const getAudioElement = () => {
+    return document.querySelector("audio");
+  };
+
+  // Socket listeners
   useEffect(() => {
     if (!socket) return;
 
-    // HOST: Tạo phòng thành công
-    socket.on("room_created", ({ roomId }) => {
-      console.log("✅ Room created:", roomId);
+    // ROOM CREATED
+    socket.on("room-created", ({ roomId, playlist, isHost }) => {
+      console.log("Room created:", { roomId, playlistLength: playlist.length });
+      
       setRoomId(roomId);
       setIsHost(true);
+      setRoomData({ playlist, startTime: Date.now(), status: "playing" });
       
-      const startTime = Date.now();
+      // Clear old queue and set new playlist
+      clearQueue();
+      setQueue(playlist, 0);
       
-      setRoomData({
-        playlist: queue,
-        startTime: startTime,
-        status: 'playing'
-      });
-
-      // QUAN TRỌNG: Reset bài hát về đầu
-      usePlayerStore.setState({
-        currentIndex: 0,
-        currentSong: queue[0],
-        currentTime: 0,
-        isPlaying: true
-      });
-
-      toast.success("🔴 Live Session Started!");
+      toast.success(`Livestream started! Room ID: ${roomId}`);
     });
 
-    // LISTENER: Join thành công
-    socket.on("sync_state", (data) => {
-      console.log("✅ Sync state received:", data);
+    // ROOM JOINED
+    socket.on("room-joined", ({ 
+      roomId, 
+      playlist, 
+      isHost, 
+      hostName,
+      currentSongIndex,
+      currentTime,
+      isPlaying,
+      autoPlay
+    }) => {
+      console.log("Room joined:", { 
+        roomId, 
+        currentSongIndex, 
+        currentTime, 
+        isPlaying, 
+        playlistLength: playlist.length 
+      });
       
-      setRoomData(data); 
+      setRoomId(roomId);
+      setIsHost(false);
+      setHostName(hostName);
+      setRoomData({ playlist, startTime: Date.now(), status: "playing" });
+      setHostPosition({ songIndex: currentSongIndex, time: currentTime });
       
-      // Tính toán vị trí Live hiện tại
-      const liveState = calculateLiveState(data.startTime, data.playlist);
+      // Clear old queue and set new playlist
+      clearQueue();
+      setQueue(playlist, currentSongIndex);
       
-      if (liveState && liveState.status === 'playing') {
-        console.log("🎵 Auto-playing from live position:", {
-          songIndex: liveState.currentIndex,
-          position: liveState.position
-        });
-
-        // Update playlist và set vào bài đang Live
-        usePlayerStore.setState({
-          queue: data.playlist || [],
-          currentIndex: liveState.currentIndex,
-          currentSong: data.playlist[liveState.currentIndex],
-          currentTime: liveState.position,
-          isPlaying: true
-        });
-      } else {
-        // Fallback: Nếu chưa Live hoặc đã kết thúc
-        usePlayerStore.setState({
-          queue: data.playlist || [],
-          currentIndex: 0,
-          currentSong: data.playlist[0],
-          currentTime: 0,
-          isPlaying: false
-        });
+      // Auto-play if host is playing
+      if (autoPlay) {
+        setTimeout(() => {
+          const audio = getAudioElement();
+          if (audio) {
+            audio.currentTime = currentTime;
+            audio.play().catch(err => {
+              console.error("Auto-play failed:", err);
+              toast.error("Click play to sync with livestream");
+            });
+            setIsPlaying(true);
+          }
+        }, 500);
+      } else if (currentTime > 0) {
+        setTimeout(() => {
+          const audio = getAudioElement();
+          if (audio) {
+            audio.currentTime = currentTime;
+          }
+        }, 500);
       }
       
-      toast.success("✨ Joined Live Room!");
+      toast.success(`Joined ${hostName}'s livestream!`);
     });
 
-    // Kết thúc phòng
-    socket.on("room_ended", () => {
-      console.log("⚠️ Room ended");
-      toast("Host has ended the session", { icon: "👋" });
+    // SYNC PLAY
+    socket.on("sync-play", ({ songIndex, currentTime }) => {
+      if (isHost) return;
+      
+      console.log("Sync play:", { songIndex, currentTime });
+      setHostPosition({ songIndex, time: currentTime });
+      
+      // Set queue to correct song
+      setQueue(playlist, songIndex);
+      
+      setTimeout(() => {
+        const audio = getAudioElement();
+        if (audio) {
+          audio.currentTime = currentTime;
+          audio.play().catch(console.error);
+          setIsPlaying(true);
+        }
+      }, 200);
+    });
+
+    // SYNC PAUSE
+    socket.on("sync-pause", ({ currentTime }) => {
+      if (isHost) return;
+      
+      console.log("Sync pause:", { currentTime });
+      setHostPosition(prev => ({ ...prev, time: currentTime }));
+      
+      const audio = getAudioElement();
+      if (audio) {
+        audio.pause();
+        audio.currentTime = currentTime;
+        setIsPlaying(false);
+      }
+    });
+
+    // SYNC SEEK
+    socket.on("sync-seek", ({ currentTime }) => {
+      if (isHost) return;
+      
+      console.log("Sync seek:", { currentTime });
+      setHostPosition(prev => ({ ...prev, time: currentTime }));
+      
+      const audio = getAudioElement();
+      if (audio) {
+        audio.currentTime = currentTime;
+      }
+    });
+
+    // SYNC CHANGE SONG
+    socket.on("sync-change-song", ({ songIndex, currentTime, isPlaying }) => {
+      if (isHost) return;
+      
+      console.log("Sync change song:", { songIndex, currentTime, isPlaying });
+      setHostPosition({ songIndex, time: currentTime });
+      
+      // Change to correct song in queue
+      setQueue(playlist, songIndex);
+      
+      setTimeout(() => {
+        const audio = getAudioElement();
+        if (audio) {
+          audio.currentTime = currentTime;
+          if (isPlaying) {
+            audio.play().catch(console.error);
+            setIsPlaying(true);
+          } else {
+            audio.pause();
+            setIsPlaying(false);
+          }
+        }
+      }, 200);
+    });
+
+    // SYNC RESPONSE
+    socket.on("sync-response", ({ songIndex, currentTime, isPlaying }) => {
+      console.log("Sync response:", { songIndex, currentTime, isPlaying });
+      
+      setIsSyncing(false);
+      setHostPosition({ songIndex, time: currentTime });
+      
+      // Sync to host's position
+      setQueue(playlist, songIndex);
+      
+      setTimeout(() => {
+        const audio = getAudioElement();
+        if (audio) {
+          audio.currentTime = currentTime;
+          if (isPlaying) {
+            audio.play().catch(console.error);
+            setIsPlaying(true);
+          } else {
+            audio.pause();
+            setIsPlaying(false);
+          }
+        }
+      }, 200);
+      
+      toast.success("Synced with host!");
+    });
+
+    // ROOM ENDED
+    socket.on("room-ended", ({ message }) => {
+      toast.error(message);
       handleLeaveRoom();
     });
 
+    // MEMBER JOINED/LEFT
+    socket.on("member-joined", ({ userName, memberCount }) => {
+      setMemberCount(memberCount);
+      toast(`${userName} joined`, { icon: "👋" });
+    });
+
+    socket.on("member-left", ({ memberCount }) => {
+      setMemberCount(memberCount);
+    });
+
     socket.on("error", ({ message }) => {
-      console.error("❌ Socket error:", message);
       toast.error(message);
     });
 
     return () => {
-      socket.off("room_created");
-      socket.off("sync_state");
-      socket.off("room_ended");
+      socket.off("room-created");
+      socket.off("room-joined");
+      socket.off("sync-play");
+      socket.off("sync-pause");
+      socket.off("sync-seek");
+      socket.off("sync-change-song");
+      socket.off("sync-response");
+      socket.off("room-ended");
+      socket.off("member-joined");
+      socket.off("member-left");
       socket.off("error");
     };
-  }, [socket, queue, setRoomId, setIsHost, setRoomData]);
+  }, [socket, isHost, playlist]);
 
-  const handleCreateRoom = () => {
-    if (!queue || queue.length === 0) {
-      toast.error("Queue is empty! Play some songs first.");
+  // Emit host events
+  useEffect(() => {
+    if (!socket || !roomId || !isHost) return;
+
+    const audio = getAudioElement();
+    if (!audio) return;
+
+    const handlePlay = () => {
+      socket.emit("host-play", {
+        roomId,
+        songIndex: currentIndex,
+        currentTime: audio.currentTime,
+      });
+    };
+
+    const handlePause = () => {
+      socket.emit("host-pause", {
+        roomId,
+        currentTime: audio.currentTime,
+      });
+    };
+
+    const handleSeeked = () => {
+      socket.emit("host-seek", {
+        roomId,
+        currentTime: audio.currentTime,
+      });
+    };
+
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("seeked", handleSeeked);
+
+    return () => {
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("seeked", handleSeeked);
+    };
+  }, [socket, roomId, isHost, currentIndex]);
+
+  // Emit when song changes
+  useEffect(() => {
+    if (!socket || !roomId || !isHost || !currentSong) return;
+    
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+      previousIndexRef.current = currentIndex;
       return;
     }
+
+    if (previousIndexRef.current !== currentIndex) {
+      console.log("Host: Song changed to index", currentIndex);
+      
+      socket.emit("host-change-song", {
+        roomId,
+        songIndex: currentIndex,
+        currentTime: 0,
+      });
+      
+      previousIndexRef.current = currentIndex;
+    }
+  }, [currentIndex, currentSong, socket, roomId, isHost]);
+
+  const handleCreateRoom = () => {
+    if (!socket) {
+      return toast.error("Socket not connected. Please refresh.");
+    }
+    if (selectedSongs.length === 0) {
+      return toast.error("Select at least one song");
+    }
+
+    const playlist = songs.filter(s => selectedSongs.includes(s._id));
+    const newRoomId = generateRoomId();
     
-    const newRoomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    
-    console.log("🔴 Creating room:", newRoomId);
-    socket.emit("create_room", {
+    socket.emit("create-room", {
       roomId: newRoomId,
-      hostId: user?.id || "unknown",
-      playlist: queue
+      playlist,
+      userId: user?.clerkId,
+      userName: user?.fullName,
     });
   };
 
   const handleJoinRoom = () => {
-    if (!joinInput.trim()) {
-      toast.error("Please enter a Room ID");
-      return;
+    if (!socket) {
+      return toast.error("Socket not connected. Please refresh.");
     }
-    
-    const roomIdToJoin = joinInput.toUpperCase();
-    console.log("🔗 Joining room:", roomIdToJoin);
-    
-    socket.emit("join_room", { 
-      roomId: roomIdToJoin, 
-      userId: user?.id || "guest" 
+    if (!roomIdInput.trim()) {
+      return toast.error("Enter a room ID");
+    }
+
+    socket.emit("join-room", {
+      roomId: roomIdInput.trim(),
+      userId: user?.clerkId,
+      userName: user?.fullName,
     });
-    
-    // Set room ID trước để UI chuyển sang IN-ROOM
-    setRoomId(roomIdToJoin);
-    setIsHost(false);
+  };
+
+  const handleEndRoom = () => {
+    socket.emit("end-room", { roomId, userId: user.clerkId });
+    resetRoom();
+    clearQueue();
+    navigate("/");
   };
 
   const handleLeaveRoom = () => {
     if (roomId) {
-      if (isHost) {
-        console.log("🛑 Ending live:", roomId);
-        socket.emit("end_live", { roomId });
-      } else {
-        console.log("👋 Leaving room:", roomId);
-        socket.emit("leave_room", { roomId });
-      }
+      socket.emit("leave-room", { roomId, userId: user.clerkId });
     }
     resetRoom();
-    usePlayerStore.setState({ isPlaying: false });
+    clearQueue();
+    setIsPlaying(false);
   };
 
-  const handleCopyRoomId = () => {
-    navigator.clipboard.writeText(roomId);
-    setCopied(true);
-    toast.success("Room ID copied!");
-    setTimeout(() => setCopied(false), 2000);
+  const handleSyncWithHost = () => {
+    if (!socket || !roomId || isHost) return;
+    
+    setIsSyncing(true);
+    socket.emit("request-sync", { roomId });
+    
+    setTimeout(() => {
+      if (isSyncing) {
+        setIsSyncing(false);
+        toast.error("Sync timeout. Try again.");
+      }
+    }, 5000);
   };
 
-  // Debug logs
-  useEffect(() => {
-    console.log("🔍 LivePage State:", { roomId, isHost, hasRoomState: !!roomState });
-  }, [roomId, isHost, roomState]);
+  const toggleSongSelection = (songId) => {
+    setSelectedSongs(prev =>
+      prev.includes(songId)
+        ? prev.filter(id => id !== songId)
+        : [...prev, songId]
+    );
+  };
 
-  // IN-ROOM VIEW
-  if (roomId) {
+  // Calculate if out of sync
+  const isOutOfSync = !isHost && (
+    currentIndex !== hostPosition.songIndex || 
+    Math.abs((getAudioElement()?.currentTime || 0) - hostPosition.time) > 3
+  );
+
+  // Not in room - show lobby
+  if (!roomId) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-zinc-900 via-black to-black p-6">
-        <div className="max-w-2xl mx-auto pt-12">
-          
-          {/* Live Badge */}
-          <div className="flex items-center justify-center mb-8">
-            <div className="flex items-center gap-3 bg-red-600 px-6 py-2 rounded-full">
-              <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-              <span className="text-white font-bold text-sm uppercase tracking-wider">Live</span>
-            </div>
+      <div className="min-h-screen bg-gradient-to-b from-zinc-900 via-zinc-900 to-black p-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-8">
+            <Radio className="w-16 h-16 mx-auto mb-4 text-emerald-400" />
+            <h1 className="text-4xl font-bold text-white mb-2">Live Playlist Streaming</h1>
+            <p className="text-zinc-400">Stream your playlist live with friends</p>
           </div>
 
-          {/* Main Card */}
-          <div className="bg-zinc-900/80 backdrop-blur-xl rounded-2xl border border-zinc-800 overflow-hidden shadow-2xl">
+          <div className="bg-zinc-800 rounded-lg p-6 mb-6">
+            <h3 className="text-lg font-semibold text-white mb-3">Join Existing Room</h3>
+            <input
+              type="text"
+              placeholder="Enter Room ID (e.g. ABC123)"
+              value={roomIdInput}
+              onChange={(e) => setRoomIdInput(e.target.value.toUpperCase())}
+              className="w-full bg-zinc-700 text-white rounded px-4 py-3 mb-4"
+              onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
+            />
             
-            {/* Header */}
-            <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 p-6 border-b border-zinc-800">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-zinc-400 uppercase tracking-wider mb-1">
-                    {isHost ? "Hosting Session" : "Listening to"}
-                  </p>
-                  <h1 className="text-2xl font-bold text-white">Live Room</h1>
-                </div>
-                <Radio className="text-green-500 w-8 h-8" />
+            <button
+              onClick={handleJoinRoom}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-lg font-semibold transition"
+            >
+              Join Room
+            </button>
+          </div>
+
+          <div className="text-center my-4">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-zinc-700"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-4 bg-zinc-900 text-zinc-400">OR</span>
               </div>
             </div>
+          </div>
 
-            {/* Room ID Section */}
-            <div className="p-6 border-b border-zinc-800">
-              <label className="text-xs text-zinc-400 uppercase tracking-wider block mb-2">
-                Room Code
-              </label>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-black/40 rounded-lg px-4 py-3 border border-zinc-700">
-                  <span className="text-2xl font-mono font-bold text-white tracking-widest">
-                    {roomId}
-                  </span>
+          <div id="create-section" className="bg-zinc-800 rounded-lg p-6">
+            <h2 className="text-2xl font-bold text-white mb-2">Create New Livestream</h2>
+            <p className="text-zinc-400 mb-4">Select songs for your livestream playlist:</p>
+            
+            {isLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader className="w-8 h-8 text-emerald-400 animate-spin" />
+              </div>
+            ) : songs.length === 0 ? (
+              <div className="text-center py-12 text-zinc-400">
+                No songs available. Upload some songs first!
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {songs.map(song => (
+                    <div
+                      key={song._id}
+                      onClick={() => toggleSongSelection(song._id)}
+                      className={`flex items-center gap-4 p-3 rounded cursor-pointer transition ${
+                        selectedSongs.includes(song._id)
+                          ? "bg-emerald-600/20 border border-emerald-500"
+                          : "bg-zinc-700 hover:bg-zinc-600"
+                      }`}
+                    >
+                      <img src={song.imageUrl} alt={song.title} className="w-12 h-12 rounded" />
+                      <div className="flex-1">
+                        <p className="text-white font-medium">{song.title}</p>
+                        <p className="text-zinc-400 text-sm">{song.artist}</p>
+                      </div>
+                      {selectedSongs.includes(song._id) && (
+                        <Music className="w-5 h-5 text-emerald-400" />
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <button 
-                  onClick={handleCopyRoomId}
-                  className="bg-zinc-800 hover:bg-zinc-700 p-3 rounded-lg transition-colors group"
+
+                <button
+                  onClick={handleCreateRoom}
+                  disabled={selectedSongs.length === 0}
+                  className="w-full mt-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-700 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold transition flex items-center justify-center gap-2"
                 >
-                  {copied ? (
-                    <Sparkles className="w-5 h-5 text-green-500" />
-                  ) : (
-                    <Copy className="w-5 h-5 text-zinc-400 group-hover:text-white" />
-                  )}
+                  <Radio className="w-5 h-5" />
+                  Start Livestream ({selectedSongs.length} songs)
                 </button>
-              </div>
-            </div>
-
-            {/* Status Info */}
-            <div className="p-6 border-b border-zinc-800">
-              <div className="flex items-start gap-3 text-sm">
-                <Clock className="w-5 h-5 text-zinc-400 mt-0.5 flex-shrink-0" />
-                <div className="flex-1">
-                  <p className="text-zinc-300 leading-relaxed">
-                    {isHost 
-                      ? "You're broadcasting your queue. Everyone hears the same thing at the same time. Music plays automatically—no manual controls." 
-                      : "You're synced to the host's timeline. You can explore past songs or stay live with the current track."}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Currently Playing */}
-            {currentSong && (
-              <div className="p-6 border-b border-zinc-800">
-                <label className="text-xs text-zinc-400 uppercase tracking-wider block mb-3">
-                  Now Playing
-                </label>
-                <div className="flex items-center gap-4">
-                  <img 
-                    src={currentSong.imageUrl} 
-                    alt={currentSong.title}
-                    className="w-16 h-16 rounded-lg shadow-lg"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-white font-semibold truncate">{currentSong.title}</h3>
-                    <p className="text-zinc-400 text-sm truncate">{currentSong.artistName}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Queue Info */}
-            <div className="p-6 border-b border-zinc-800">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-zinc-400 uppercase tracking-wider">Total Songs</p>
-                  <p className="text-2xl font-bold text-white">{queue.length}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-zinc-400 uppercase tracking-wider">Mode</p>
-                  <p className="text-sm font-semibold text-green-500">Strict Sync</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Debug Info (Remove in production) */}
-            {process.env.NODE_ENV === 'development' && (
-              <div className="p-6 border-b border-zinc-800 bg-yellow-900/10">
-                <p className="text-xs text-yellow-400 font-mono">
-                  Debug: roomId={roomId}, isHost={isHost.toString()}, hasState={!!roomState}
+                <p className="text-xs text-zinc-500 text-center mt-2">
+                  Room ID will be generated automatically
                 </p>
-              </div>
+              </>
             )}
-
-            {/* Action Button */}
-            <div className="p-6">
-              <button 
-                onClick={handleLeaveRoom}
-                className="w-full bg-white hover:bg-zinc-100 text-black font-bold py-3.5 rounded-full transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
-              >
-                <LogOut className="w-5 h-5" />
-                {isHost ? "End Session" : "Leave Room"}
-              </button>
-            </div>
-
           </div>
-
-          {/* Footer Note */}
-          <div className="mt-6 text-center">
-            <p className="text-xs text-zinc-500">
-              {isHost 
-                ? "Share the room code with friends to let them join" 
-                : "Stay synced to experience music together"}
-            </p>
-          </div>
-
         </div>
       </div>
     );
   }
 
-  // LOBBY VIEW
+  // In room - show livestream
   return (
-    <div className="min-h-screen bg-gradient-to-b from-zinc-900 via-black to-black p-6">
-      <div className="max-w-4xl mx-auto pt-12">
-        
+    <div className="min-h-screen bg-gradient-to-b from-zinc-900 via-zinc-900 to-black p-8">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 bg-green-600/20 text-green-500 px-4 py-2 rounded-full mb-4">
-            <Radio className="w-4 h-4" />
-            <span className="text-sm font-semibold">Live Sessions</span>
+        <div className="bg-zinc-800 rounded-lg p-6 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                <h1 className="text-2xl font-bold text-white">
+                  {isHost ? "Your Livestream" : `${hostName}'s Livestream`}
+                </h1>
+              </div>
+              <div className="flex items-center gap-4 text-zinc-400">
+                <span className="flex items-center gap-2">
+                  <Users className="w-4 h-4" />
+                  {memberCount} {memberCount === 1 ? "listener" : "listeners"}
+                </span>
+                <span className="text-xs bg-zinc-700 px-3 py-1 rounded">
+                  Room: {roomId}
+                </span>
+                {!isHost && isOutOfSync && (
+                  <span className="text-xs bg-yellow-600/20 text-yellow-400 px-3 py-1 rounded border border-yellow-600/30">
+                    Out of sync
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            <div className="flex gap-2">
+              {!isHost && (
+                <button
+                  onClick={handleSyncWithHost}
+                  disabled={isSyncing}
+                  className={`flex items-center gap-2 ${
+                    isOutOfSync 
+                      ? 'bg-yellow-600 hover:bg-yellow-700' 
+                      : 'bg-blue-600 hover:bg-blue-700'
+                  } disabled:bg-zinc-700 text-white px-4 py-2 rounded-lg transition`}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin" : ""}`} />
+                  {isOutOfSync ? 'Resync' : 'Sync'}
+                </button>
+              )}
+              
+              {isHost ? (
+                <button
+                  onClick={handleEndRoom}
+                  className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition"
+                >
+                  <LogOut className="w-4 h-4" />
+                  End Room
+                </button>
+              ) : (
+                <button
+                  onClick={handleLeaveRoom}
+                  className="flex items-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg transition"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Leave
+                </button>
+              )}
+            </div>
           </div>
-          <h1 className="text-5xl font-bold text-white mb-3">
-            Listen Together
-          </h1>
-          <p className="text-zinc-400 text-lg">
-            Create a room or join friends for synchronized music streaming
-          </p>
         </div>
 
-        {/* Debug Panel */}
-        {process.env.NODE_ENV === 'development' && (
-          <div className="mb-6 p-4 bg-yellow-900/20 border border-yellow-600/30 rounded-lg">
-            <p className="text-xs text-yellow-400 font-mono">
-              Socket: {socket ? '✅ Connected' : '❌ Disconnected'} | 
-              User: {user?.id || 'Guest'} | 
-              Queue: {queue?.length || 0} songs
-            </p>
+        {/* Current Song */}
+        {currentSong && (
+          <div className="bg-zinc-800 rounded-lg p-6 mb-6">
+            <div className="flex items-center gap-6">
+              <img
+                src={currentSong.imageUrl}
+                alt={currentSong.title}
+                className="w-24 h-24 rounded-lg shadow-lg"
+              />
+              <div className="flex-1">
+                <p className="text-sm text-zinc-400 mb-1">Now Playing</p>
+                <h2 className="text-2xl font-bold text-white mb-1">{currentSong.title}</h2>
+                <p className="text-zinc-400">{currentSong.artist}</p>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Cards Grid */}
-        <div className="grid md:grid-cols-2 gap-6">
-          
-          {/* Join Room Card */}
-          <div className="bg-zinc-900/80 backdrop-blur-xl rounded-2xl border border-zinc-800 p-8 hover:border-zinc-700 transition-colors">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="bg-blue-600/20 p-3 rounded-xl">
-                <Users className="w-6 h-6 text-blue-500" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">Join Room</h2>
-                <p className="text-sm text-zinc-400">Enter a code to listen</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-zinc-400 uppercase tracking-wider block mb-2">
-                  Room Code
-                </label>
-                <input
-                  type="text"
-                  placeholder="ABC123"
-                  className="w-full bg-black/40 border border-zinc-700 rounded-lg px-4 py-3 text-white placeholder-zinc-500 font-mono uppercase text-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                  value={joinInput}
-                  onChange={(e) => setJoinInput(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => e.key === 'Enter' && handleJoinRoom()}
-                  maxLength={6}
-                />
-              </div>
-
-              <button 
-                onClick={handleJoinRoom}
-                disabled={!joinInput.trim()}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-bold py-3.5 rounded-full transition-all transform hover:scale-105 disabled:hover:scale-100 disabled:cursor-not-allowed shadow-lg"
-              >
-                Join Session
-              </button>
-            </div>
-
-            <div className="mt-6 p-3 bg-blue-600/10 rounded-lg border border-blue-600/20">
-              <p className="text-xs text-blue-400 leading-relaxed">
-                <strong>Listener Mode:</strong> Explore past songs freely or sync to the live track
-              </p>
-            </div>
-          </div>
-
-          {/* Create Room Card */}
-          <div className="bg-zinc-900/80 backdrop-blur-xl rounded-2xl border border-zinc-800 p-8 hover:border-zinc-700 transition-colors">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="bg-red-600/20 p-3 rounded-xl">
-                <Radio className="w-6 h-6 text-red-500" />
-              </div>
-              <div>
-                <h2 className="text-xl font-bold text-white">Go Live</h2>
-                <p className="text-sm text-zinc-400">Start broadcasting</p>
-              </div>
-            </div>
-
-            {/* Queue Preview */}
-            <div className="mb-6">
-              <label className="text-xs text-zinc-400 uppercase tracking-wider block mb-2">
-                Current Queue
-              </label>
-              {currentSong ? (
-                <div className="bg-black/40 border border-zinc-700 rounded-lg p-3">
-                  <div className="flex items-center gap-3">
-                    <img 
-                      src={currentSong.imageUrl} 
-                      alt={currentSong.title}
-                      className="w-12 h-12 rounded object-cover"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-medium truncate text-sm">
-                        {currentSong.title}
-                      </p>
-                      <p className="text-zinc-400 text-xs">
-                        {queue.length} {queue.length === 1 ? 'song' : 'songs'}
-                      </p>
-                    </div>
-                    <Music2 className="w-5 h-5 text-zinc-600" />
+        {/* Playlist */}
+        <div className="bg-zinc-800 rounded-lg p-6">
+          <h3 className="text-xl font-bold text-white mb-4">Playlist ({playlist.length} songs)</h3>
+          <div className="space-y-2">
+            {playlist.map((song, index) => {
+              const isPast = !isHost && index < hostPosition.songIndex;
+              const isCurrent = index === currentIndex;
+              const isHostLive = !isHost && index === hostPosition.songIndex;
+              
+              return (
+                <div
+                  key={song._id}
+                  className={`flex items-center gap-4 p-3 rounded transition ${
+                    isCurrent
+                      ? "bg-emerald-600/20 border border-emerald-500"
+                      : isPast
+                      ? "bg-zinc-700/50 opacity-60"
+                      : "bg-zinc-700"
+                  }`}
+                >
+                  <span className="text-zinc-400 w-8">{index + 1}</span>
+                  <img src={song.imageUrl} alt={song.title} className="w-12 h-12 rounded" />
+                  <div className="flex-1">
+                    <p className="text-white font-medium">{song.title}</p>
+                    <p className="text-zinc-400 text-sm">{song.artist}</p>
                   </div>
+                  {isCurrent && isPlaying && (
+                    <div className="flex gap-1">
+                      <div className="w-1 h-4 bg-emerald-400 animate-pulse" />
+                      <div className="w-1 h-4 bg-emerald-400 animate-pulse" style={{ animationDelay: '0.075s' }} />
+                      <div className="w-1 h-4 bg-emerald-400 animate-pulse" style={{ animationDelay: '0.15s' }} />
+                    </div>
+                  )}
+                  {isHostLive && !isCurrent && (
+                    <span className="text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded border border-red-500/30">
+                      LIVE
+                    </span>
+                  )}
                 </div>
-              ) : (
-                <div className="bg-black/40 border border-zinc-700 rounded-lg p-4 text-center">
-                  <Music2 className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-                  <p className="text-sm text-zinc-500">No songs in queue</p>
-                </div>
-              )}
-            </div>
-
-            <button 
-              onClick={handleCreateRoom}
-              disabled={!currentSong}
-              className="w-full bg-red-600 hover:bg-red-700 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-bold py-3.5 rounded-full transition-all transform hover:scale-105 disabled:hover:scale-100 disabled:cursor-not-allowed shadow-lg flex items-center justify-center gap-2"
-            >
-              <Radio className="w-5 h-5" />
-              Start Broadcasting
-            </button>
-
-            <div className="mt-6 p-3 bg-red-600/10 rounded-lg border border-red-600/20">
-              <p className="text-xs text-red-400 leading-relaxed">
-                <strong>Host Mode:</strong> Music will restart from the beginning to ensure perfect sync
-              </p>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Info Section */}
-        <div className="mt-12 bg-zinc-900/50 rounded-2xl border border-zinc-800 p-6">
-          <h3 className="text-lg font-bold text-white mb-4">How Live Sessions Work</h3>
-          <div className="grid md:grid-cols-3 gap-6">
-            <div>
-              <div className="bg-green-600/20 w-10 h-10 rounded-lg flex items-center justify-center mb-3">
-                <Clock className="w-5 h-5 text-green-500" />
-              </div>
-              <h4 className="text-white font-semibold mb-1">Absolute Timeline</h4>
-              <p className="text-sm text-zinc-400">
-                Everyone follows the same timeline from the moment the host starts
-              </p>
-            </div>
-            <div>
-              <div className="bg-blue-600/20 w-10 h-10 rounded-lg flex items-center justify-center mb-3">
-                <Users className="w-5 h-5 text-blue-500" />
-              </div>
-              <h4 className="text-white font-semibold mb-1">Full History Access</h4>
-              <p className="text-sm text-zinc-400">
-                Listeners can explore and replay any past songs at their own pace
-              </p>
-            </div>
-            <div>
-              <div className="bg-purple-600/20 w-10 h-10 rounded-lg flex items-center justify-center mb-3">
-                <Radio className="w-5 h-5 text-purple-500" />
-              </div>
-              <h4 className="text-white font-semibold mb-1">Quick Sync</h4>
-              <p className="text-sm text-zinc-400">
-                Jump back to live whenever you want with one tap
-              </p>
-            </div>
+              );
+            })}
           </div>
         </div>
 
+        {!isHost && (
+          <div className="mt-6 bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
+            <p className="text-blue-400 text-sm">
+              💡 <strong>Livestream Rules:</strong>
+            </p>
+            <ul className="text-blue-400 text-sm mt-2 space-y-1 ml-4">
+              <li>✓ You can rewind to previous songs or earlier moments</li>
+              <li>✗ You cannot skip ahead of what the host is playing</li>
+              <li>🔄 Click <strong>Sync</strong> to jump back to the host's current position</li>
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );
-};
-
-export default LivePage;
+}

@@ -3,21 +3,31 @@ import { create } from "zustand";
 export const useRoomStore = create((set, get) => ({
   roomId: null,
   isHost: false,
-  playlist: [],    // Danh sách bài hát cố định
-  startTime: null, // Thời điểm bắt đầu tuyệt đối
-  status: 'idle',  // idle | playing | ended
+  playlist: [],
+  startTime: null,
+  status: 'idle',
   
   setRoomId: (id) => set({ roomId: id }),
+  
   setIsHost: (isHost) => set({ isHost }),
   
-  // Khi join room thành công
+  // When successfully joining/creating room
   setRoomData: ({ playlist, startTime, status }) => set({ 
     playlist, 
     startTime, 
     status: status || 'playing' 
   }),
   
-  // Getter để lấy roomState (cho AudioPlayer)
+  // Reset room (leave/end)
+  resetRoom: () => set({ 
+    roomId: null, 
+    isHost: false, 
+    playlist: [],
+    startTime: null,
+    status: 'idle'
+  }),
+  
+  // Getter for roomState
   get roomState() {
     const state = get();
     if (!state.roomId) return null;
@@ -28,12 +38,4 @@ export const useRoomStore = create((set, get) => ({
       status: state.status
     };
   },
-  
-  resetRoom: () => set({ 
-    roomId: null, 
-    isHost: false, 
-    playlist: [],
-    startTime: null,
-    status: 'idle'
-  }),
 }));

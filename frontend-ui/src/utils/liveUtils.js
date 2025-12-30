@@ -1,131 +1,139 @@
 /**
- * Tính toán trạng thái Live dựa trên thời gian tuyệt đối
- * @param {number} startTime - Timestamp bắt đầu Live (ms)
- * @param {Array} playlist - Danh sách bài hát
- * @returns {Object} - Trạng thái hiện tại của Live
+ * Live Mode Utilities - Fixed Version
+ * Handles timeline calculation and sync logic for live streaming
+ */
+
+/**
+ * Calculate current live state based on absolute timeline
+ * @param {number} startTime - Unix timestamp when live started
+ * @param {Array} playlist - Array of songs with duration
+ * @returns {Object} Current live state
  */
 export const calculateLiveState = (startTime, playlist) => {
-  if (!startTime || !playlist || playlist.length === 0) return null;
+  if (!startTime || !playlist || playlist.length === 0) {
+    return { status: 'idle', currentIndex: 0, position: 0 };
+  }
 
   const now = Date.now();
-  const elapsedTotalSeconds = (now - startTime) / 1000;
+  const elapsed = (now - startTime) / 1000; // seconds since start
 
-  // Chưa đến giờ bắt đầu
-  if (elapsedTotalSeconds < 0) {
-    return {
-      currentSong: playlist[0],
-      currentIndex: 0,
-      position: 0,
-      status: 'waiting',
-      delay: Math.abs(elapsedTotalSeconds)
-    };
-  }
-
-  let accumulatedDuration = 0;
-
+  let accumulatedTime = 0;
+  
   for (let i = 0; i < playlist.length; i++) {
-    const song = playlist[i];
-    const songDuration = song.duration || 0;
-
-    if (elapsedTotalSeconds < accumulatedDuration + songDuration) {
-      const currentPosition = elapsedTotalSeconds - accumulatedDuration;
+    const songDuration = playlist[i].duration || 0;
+    
+    if (elapsed < accumulatedTime + songDuration) {
+      // Current song
       return {
-        currentSong: song,
-        currentIndex: i,
-        position: currentPosition,
         status: 'playing',
-        timeLeft: songDuration - currentPosition,
-        totalElapsed: elapsedTotalSeconds
+        currentIndex: i,
+        position: elapsed - accumulatedTime, // Position within current song
+        totalElapsed: elapsed
       };
     }
-
-    accumulatedDuration += songDuration;
+    
+    accumulatedTime += songDuration;
   }
 
-  // Đã hết playlist
+  // All songs finished
   return {
     status: 'ended',
-    totalElapsed: elapsedTotalSeconds
+    currentIndex: playlist.length - 1,
+    position: playlist[playlist.length - 1]?.duration || 0,
+    totalElapsed: elapsed
   };
 };
 
 /**
- * Kiểm tra xem một bài hát có phải là "bài cũ" (đã phát xong) không
- * @param {number} songIndex - Index của bài cần kiểm tra
- * @param {number} currentLiveIndex - Index bài đang Live
- * @returns {boolean}
+ * Check if a song index is in the past (already played)
  */
-export const isPastSong = (songIndex, currentLiveIndex) => {
-  return songIndex < currentLiveIndex;
+export const isPastSong = (songIndex, liveIndex) => {
+  return songIndex < liveIndex;
 };
 
 /**
- * Kiểm tra xem một bài hát có phải là "bài đang Live" không
- * @param {number} songIndex - Index của bài cần kiểm tra
- * @param {number} currentLiveIndex - Index bài đang Live
- * @returns {boolean}
+ * Check if a song index is currently live
  */
-export const isLiveSong = (songIndex, currentLiveIndex) => {
-  return songIndex === currentLiveIndex;
+export const isLiveSong = (songIndex, liveIndex) => {
+  return songIndex === liveIndex;
 };
 
 /**
- * Kiểm tra xem một bài hát có phải là "bài tương lai" (chưa phát) không
- * @param {number} songIndex - Index của bài cần kiểm tra
- * @param {number} currentLiveIndex - Index bài đang Live
- * @returns {boolean}
+ * Check if a song index is in the future (not yet played)
  */
-export const isFutureSong = (songIndex, currentLiveIndex) => {
-  return songIndex > currentLiveIndex;
+export const isFutureSong = (songIndex, liveIndex) => {
+  return songIndex > liveIndex;
 };
 
 /**
- * Tính thời gian tích lũy đến một bài cụ thể
- * @param {Array} playlist - Danh sách bài hát
- * @param {number} targetIndex - Index bài muốn tính
- * @returns {number} - Tổng thời gian (giây)
- */
-export const getAccumulatedTime = (playlist, targetIndex) => {
-  let accumulated = 0;
-  for (let i = 0; i < targetIndex && i < playlist.length; i++) {
-    accumulated += playlist[i].duration || 0;
-  }
-  return accumulated;
-};
-
-/**
- * Kiểm tra xem người dùng có đang ở chế độ "Live" (đồng bộ) không
- * @param {number} userPosition - Vị trí hiện tại của user (giây)
- * @param {number} livePosition - Vị trí thực tế của Live (giây)
- * @param {number} userSongIndex - Index bài user đang nghe
- * @param {number} liveSongIndex - Index bài đang Live
- * @param {number} tolerance - Độ sai lệch cho phép (giây)
- * @returns {boolean}
- */
-export const isUserInSync = (userPosition, livePosition, userSongIndex, liveSongIndex, tolerance = 2) => {
-  if (userSongIndex !== liveSongIndex) return false;
-  return Math.abs(userPosition - livePosition) <= tolerance;
-};
-
-/**
- * Kiểm tra xem có thể seek tới vị trí này không (Listener)
- * @param {number} targetTime - Thời gian muốn seek tới
- * @param {number} currentIndex - Index bài đang nghe
- * @param {number} liveIndex - Index bài đang Live
- * @param {number} livePosition - Vị trí thực tế của Live (giây)
- * @returns {boolean}
+ * Check if user can seek to a specific position
+ * Rules:
+ * - Can seek freely in past songs
+ * - Can seek backward in current live song
+ * - Cannot seek forward in current live song
+ * - Cannot seek in future songs
  */
 export const canSeekTo = (targetTime, currentIndex, liveIndex, livePosition) => {
-  // Nếu đang nghe bài cũ -> Cho phép seek thoải mái
-  if (isPastSong(currentIndex, liveIndex)) {
+  if (currentIndex < liveIndex) {
+    // Past song - can seek anywhere
     return true;
   }
   
-  // Nếu đang nghe bài Live -> Chỉ cho phép seek NGƯỢC (không được vượt quá livePosition)
-  if (isLiveSong(currentIndex, liveIndex)) {
+  if (currentIndex === liveIndex) {
+    // Live song - can only seek backward
     return targetTime <= livePosition;
   }
   
-  // Nếu là bài tương lai -> Không cho phép
+  // Future song - cannot seek
   return false;
+};
+
+/**
+ * Check if user is in sync with live timeline
+ * @param {number} userTime - User's current playback position
+ * @param {number} livePosition - Live position
+ * @param {number} userIndex - User's current song index
+ * @param {number} liveIndex - Live song index
+ * @param {number} tolerance - Acceptable time difference in seconds
+ */
+export const isUserInSync = (userTime, livePosition, userIndex, liveIndex, tolerance = 3) => {
+  // Must be on same song
+  if (userIndex !== liveIndex) {
+    return false;
+  }
+  
+  // Check time difference
+  const timeDiff = Math.abs(userTime - livePosition);
+  return timeDiff <= tolerance;
+};
+
+/**
+ * Calculate what song should be playing at a given timestamp
+ * Used for initial sync when joining
+ */
+export const getSongAtTimestamp = (startTime, playlist, timestamp = Date.now()) => {
+  const elapsed = (timestamp - startTime) / 1000;
+  let accumulatedTime = 0;
+  
+  for (let i = 0; i < playlist.length; i++) {
+    const songDuration = playlist[i].duration || 0;
+    
+    if (elapsed < accumulatedTime + songDuration) {
+      return {
+        index: i,
+        position: elapsed - accumulatedTime,
+        song: playlist[i]
+      };
+    }
+    
+    accumulatedTime += songDuration;
+  }
+  
+  // Ended
+  return {
+    index: playlist.length - 1,
+    position: playlist[playlist.length - 1]?.duration || 0,
+    song: playlist[playlist.length - 1],
+    ended: true
+  };
 };

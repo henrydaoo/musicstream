@@ -91,3 +91,18 @@ export const cacheInvalidatePattern = async (pattern) => {
     return false;
   }
 };
+
+// --- LIVE ROOM HELPERS ---
+
+export const roomSet = async (roomId, data) => {
+  // Room tồn tại trong 24h rồi tự hủy để tránh rác
+  return await cacheSet(`live_room:${roomId}`, data, 86400); 
+};
+
+export const roomGet = async (roomId) => {
+  return await cacheGet(`live_room:${roomId}`);
+};
+
+export const roomDel = async (roomId) => {
+  return await cacheDel(`live_room:${roomId}`);
+};
