@@ -187,7 +187,7 @@ npm install
    Create a `.env` file in the frontend directory:
 
 ```env
-VITE_API_URL=http://localhost:3000/api
+VITE_API_URL=http://localhost:3000
 VITE_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
 ```
 
@@ -307,7 +307,7 @@ Deploy the `dist/` directory to:
 ### Environment Variables
 
 ```env
-VITE_API_URL=https://your-api-domain.com/api
+VITE_API_URL=https://your-api-domain.com
 VITE_CLERK_PUBLISHABLE_KEY=your_production_clerk_key
 ```
 
