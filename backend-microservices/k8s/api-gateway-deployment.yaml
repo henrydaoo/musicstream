@@ -34,7 +34,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
       - name: api-gateway
-        image: registry.digitalocean.com/music-stream-registry/api-gateway:latest
+        image: registry.digitalocean.com/musicstream/api-gateway:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 3000

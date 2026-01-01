@@ -5,32 +5,27 @@ metadata:
   namespace: music-stream
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    # Temporarily disable SSL redirect to allow HTTP-01 challenges
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - api.139.59.193.80.nip.io
-    - grafana.139.59.193.80.nip.io
+    - api.139.59.220.120.nip.io
+    - grafana.139.59.220.120.nip.io
     secretName: music-stream-tls
   rules:
-  # API Gateway
-  - host: api.139.59.193.80.nip.io
+  - host: api.139.59.220.120.nip.io
     http:
       paths:
-      # IMPORTANT: PathType must be Prefix, not ImplementationSpecific
-      # This allows ACME solver to create more specific paths
       - path: /
         pathType: Prefix
         backend:
           service:
             name: api-gateway
             port:
-              number: 3000
-  
-  # Grafana
-  - host: grafana.139.59.193.80.nip.io
+              number: 80
+  - host: grafana.139.59.220.120.nip.io
     http:
       paths:
       - path: /
@@ -39,4 +34,4 @@ spec:
           service:
             name: grafana
             port:
-              number: 3000
+              number: 80

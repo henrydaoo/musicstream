@@ -39,6 +39,9 @@ import { setGetToken } from "./services/api";
 import ForYouPage from "./pages/ForYouPage";
 import SongDetailPage from "./pages/SongDetailPage";
 
+import LivePage from "./pages/LivePage";
+import { SocketContextProvider } from "./contexts/SocketContext";
+
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 const ProtectedRoute = ({ children, requireRole }) => {
@@ -148,6 +151,7 @@ function App() {
       <AudioContextProvider>
         <BrowserRouter>
           <AuthSync>
+            <SocketContextProvider>
             <Toaster
               position="top-center"
               toastOptions={{
@@ -175,6 +179,7 @@ function App() {
                     <MainLayout>
                       <Routes>
                         <Route path="/" element={<HomePage />} />
+                        <Route path="/live" element={<LivePage />} /> {/* <--- Route mới */}
                         <Route path="/for-you" element={<ForYouPage />} />
                         <Route path="/songs" element={<SongsPage />} />
                         <Route path="/songs/:id" element={<SongDetailPage />} />
@@ -209,6 +214,7 @@ function App() {
               </Routes>
               <GlobalAudioPlayer />
             </SignedIn>
+            </SocketContextProvider>
           </AuthSync>
         </BrowserRouter>
       </AudioContextProvider>

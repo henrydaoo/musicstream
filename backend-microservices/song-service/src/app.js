@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http"; // Import HTTP module
 import cors from "cors";
 import dotenv from "dotenv";
 import { connectDB } from "./config/db.js";
@@ -7,6 +8,7 @@ import adminRoutes from "./routes/admin.route.js";
 import { clerkMiddleware } from "@clerk/express";
 import { connectRedis } from "./config/redis.js";
 import { initializeRecombee } from "./services/recombee.service.js";
+import setupSocket from "./socket/socketHandler.js"; // Import socket handler
 import {
   register,
   httpRequestDuration,
@@ -17,6 +19,8 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3002;
+
+const httpServer = http.createServer(app);
 
 app.use(cors());
 app.use(express.json());
@@ -65,6 +69,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Something went wrong!" });
 });
 
+// Setup Socket.io
+setupSocket(httpServer);
+
 const startServer = async () => {
   try {
     await connectDB();
@@ -88,8 +95,9 @@ const startServer = async () => {
       global.recombeeInitialized = false;
     }
 
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log(`🚀 Song Service running on port ${PORT}`);
+      console.log(`🔌 Socket.io initialized`);
       console.log(`📊 Metrics available at http://localhost:${PORT}/metrics`);
       console.log(
         `🎵 Recommendation engine: ${

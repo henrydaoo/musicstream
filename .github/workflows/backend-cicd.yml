@@ -12,7 +12,7 @@ on:
       - 'backend-microservices/**'
 
 env:
-  REGISTRY: registry.digitalocean.com/music-stream-registry
+  REGISTRY: registry.digitalocean.com/musicstream
   CLUSTER_NAME: music-stream-cluster
   
 jobs:

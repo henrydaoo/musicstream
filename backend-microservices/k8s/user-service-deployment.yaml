@@ -21,7 +21,7 @@ spec:
         app: user-service
     spec:
       imagePullSecrets:
-        - name: regcred
+        - name: registry-musicstream
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -36,7 +36,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
       - name: user-service
-        image: registry.digitalocean.com/music-stream-registry/user-service:latest
+        image: registry.digitalocean.com/musicstream/user-service:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
