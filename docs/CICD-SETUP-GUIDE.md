@@ -33,7 +33,7 @@
 # Qua DigitalOcean Dashboard:
 # 1. Click "Create" → "Container Registry"
 # 2. Chọn plan (Basic: $5/month cho 500MB)
-# 3. Đặt tên: music-stream-registry
+# 3. Đặt tên: musicstream
 # 4. Click "Create Registry"
 ```
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set your registry URL
-REGISTRY="registry.digitalocean.com/music-stream-registry"
+REGISTRY="registry.digitalocean.com/musicstream"
 
 # Build and push all services
 services=("user-service" "song-service" "album-service" "api-gateway")

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-REGISTRY="registry.digitalocean.com/music-stream-registry"
+REGISTRY="registry.digitalocean.com/musicstream"
 
 # Update all deployment files
 sed -i "s|youracr.azurecr.io|$REGISTRY|g" k8s/*-deployment.yaml

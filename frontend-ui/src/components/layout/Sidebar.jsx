@@ -7,6 +7,7 @@ import {
   Sparkles,
   X,
   Settings,
+  Radio
 } from "lucide-react";
 
 const Sidebar = ({ onClose }) => {
@@ -18,6 +19,7 @@ const Sidebar = ({ onClose }) => {
     { icon: Music, label: "Songs", path: "/songs" },
     { icon: Disc, label: "Albums", path: "/albums" },
     { icon: Library, label: "My Library", path: "/library" },
+    { label: "Live Room", icon: Radio, path: "/live" },
     { icon: Settings, label: "Profile", path: "/profile" },
   ];
 

@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePlayerStore } from "../../store/usePlayerStore";
+import { useRoomStore } from "../../store/useRoomStore";
 import { useAdaptiveStreaming } from "../../hooks/useAdaptiveStreaming";
 import {
   Play,
@@ -8,6 +9,7 @@ import {
   SkipBack,
   SkipForward,
   Volume2,
+  VolumeX,
   Repeat,
   Shuffle,
   ListMusic,
@@ -20,6 +22,7 @@ import VisualizerControls from "../player/VisualizerControls";
 import QualitySelector from "../player/QualitySelector";
 import { useAudioContext } from "../../contexts/AudioContext";
 import { recommendationService } from "../../services/recommendationService";
+import toast from "react-hot-toast";
 
 const AudioPlayer = () => {
   const audioRef = useRef(null);
@@ -34,6 +37,7 @@ const AudioPlayer = () => {
   const hasTrackedPlayRef = useRef(false);
   const hasTrackedCompleteRef = useRef(false);
   const lastSongIdRef = useRef(null);
+  const lastValidTimeRef = useRef(0);
 
   const {
     currentSong,
@@ -43,6 +47,8 @@ const AudioPlayer = () => {
     duration,
     repeat,
     shuffle,
+    queue,
+    currentIndex,
     togglePlay,
     playNext,
     playPrevious,
@@ -52,6 +58,10 @@ const AudioPlayer = () => {
     toggleShuffle,
     setIsPlaying,
   } = usePlayerStore();
+
+  // Get livestream state
+  const { roomId, isHost } = useRoomStore();
+  const [hostPosition, setHostPosition] = useState({ songIndex: 0, time: 0 });
 
   // Adaptive streaming hook
   const {
@@ -66,10 +76,19 @@ const AudioPlayer = () => {
     hasStreamingUrls,
   } = useAdaptiveStreaming(currentSong);
 
+  // Listen to host position updates from LivePage
+  useEffect(() => {
+    const handleHostPositionUpdate = (event) => {
+      setHostPosition(event.detail);
+    };
+
+    window.addEventListener("livestream-host-position", handleHostPositionUpdate);
+    return () => window.removeEventListener("livestream-host-position", handleHostPositionUpdate);
+  }, []);
+
   // Keyboard shortcut: Space for Play/Pause
   useEffect(() => {
     const handleKeyPress = (e) => {
-      // Ignore if user is typing in an input/textarea
       if (
         e.target.tagName === "INPUT" ||
         e.target.tagName === "TEXTAREA" ||
@@ -79,7 +98,7 @@ const AudioPlayer = () => {
       }
 
       if (e.code === "Space") {
-        e.preventDefault(); // Prevent page scroll
+        e.preventDefault();
         togglePlay();
       }
     };
@@ -121,7 +140,6 @@ const AudioPlayer = () => {
 
     setIsLoadingQuality(true);
 
-    // Create or reuse a hidden audio element for preloading
     if (!preloadAudioRef.current) {
       preloadAudioRef.current = document.createElement("audio");
     }
@@ -131,7 +149,6 @@ const AudioPlayer = () => {
     preloadAudio.currentTime = currentTime;
 
     const handleCanPlay = () => {
-      // Only assign src when preloaded and can play
       audioRef.current.src = audioUrl;
       audioRef.current.currentTime = currentTime;
       audioRef.current.load();
@@ -140,7 +157,6 @@ const AudioPlayer = () => {
     };
 
     preloadAudio.addEventListener("canplay", handleCanPlay);
-
     preloadAudio.load();
 
     return () => {
@@ -157,35 +173,107 @@ const AudioPlayer = () => {
     }
   }, [currentSong?._id]);
 
-  // Handle time update with tracking logic
-  const handleTimeUpdate = () => {
+  // LIVESTREAM: Block forward seeking for members
+  useEffect(() => {
+    if (!audioRef.current || !roomId || isHost) return;
+
+    const audio = audioRef.current;
+
+    const handleSeeking = () => {
+      const seekTime = audio.currentTime;
+      const maxAllowedTime = hostPosition.time + 3; // 3s buffer
+
+      console.log("🔍 Livestream seek check:", {
+        seekTime,
+        maxAllowedTime,
+        currentIndex,
+        hostSongIndex: hostPosition.songIndex,
+        lastValidTime: lastValidTimeRef.current
+      });
+
+      // RULE 1: Cannot be on future songs
+      if (currentIndex > hostPosition.songIndex) {
+        console.log("❌ BLOCKED: On future song");
+        audio.currentTime = lastValidTimeRef.current || 0;
+        toast.error("⛔ Cannot jump to future songs", { duration: 1500 });
+        return;
+      }
+
+      // RULE 2: On same song as host - cannot seek forward
+      if (currentIndex === hostPosition.songIndex) {
+        // Allow some buffer time for song transitions
+        if (seekTime > maxAllowedTime && hostPosition.time > 1) {
+          console.log("❌ BLOCKED: Seeking ahead of host");
+          audio.currentTime = lastValidTimeRef.current || 0;
+          toast.error("⛔ Cannot seek ahead of livestream", { duration: 1500 });
+          return;
+        }
+      }
+
+      // ALLOWED: On past songs or seeking backward
+      console.log("✅ ALLOWED: Valid seek position");
+    };
+
+    audio.addEventListener("seeking", handleSeeking);
+
+    return () => {
+      audio.removeEventListener("seeking", handleSeeking);
+    };
+  }, [roomId, isHost, currentIndex, hostPosition]);
+
+  // Track valid time position (for blocking)
+  useEffect(() => {
     if (!audioRef.current) return;
 
-    const time = audioRef.current.currentTime;
-    setCurrentTime(time);
+    const audio = audioRef.current;
 
-    if (
-      !currentSong ||
-      !isPlaying ||
-      (currentSong && currentSong?._id !== lastSongIdRef.current)
-    )
-      return;
+    const handleTimeUpdate = () => {
+      const time = audio.currentTime;
+      setCurrentTime(time);
 
-    // Track play after 3 seconds of listening
-    if (time > 3 && !hasTrackedPlayRef.current) {
-      recommendationService.trackPlay(currentSong._id);
-      hasTrackedPlayRef.current = true;
-    }
-
-    // Track completion when user listens to 80%+ of song
-    if (duration > 0 && !hasTrackedCompleteRef.current) {
-      const completionPercentage = (time / duration) * 100;
-      if (completionPercentage >= 80) {
-        recommendationService.trackComplete(currentSong._id);
-        hasTrackedCompleteRef.current = true;
+      // Update last valid time for livestream blocking
+      if (roomId && !isHost) {
+        // More lenient for past songs
+        if (currentIndex < hostPosition.songIndex) {
+          lastValidTimeRef.current = time;
+        } 
+        // Strict for current host song
+        else if (currentIndex === hostPosition.songIndex && time <= hostPosition.time + 3) {
+          lastValidTimeRef.current = time;
+        }
+      } else {
+        lastValidTimeRef.current = time;
       }
-    }
-  };
+
+      // Recommendation tracking (skip if in livestream as member)
+      if (roomId && !isHost) return;
+
+      if (!currentSong || !isPlaying || (currentSong && currentSong?._id !== lastSongIdRef.current)) {
+        return;
+      }
+
+      // Track play after 3 seconds
+      if (time > 3 && !hasTrackedPlayRef.current) {
+        recommendationService.trackPlay(currentSong._id);
+        hasTrackedPlayRef.current = true;
+      }
+
+      // Track completion at 80%+
+      if (duration > 0 && !hasTrackedCompleteRef.current) {
+        const completionPercentage = (time / duration) * 100;
+        if (completionPercentage >= 80) {
+          recommendationService.trackComplete(currentSong._id);
+          hasTrackedCompleteRef.current = true;
+        }
+      }
+    };
+
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+
+    return () => {
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+    };
+  }, [roomId, isHost, currentIndex, hostPosition, currentSong, isPlaying, duration]);
 
   // Track skip when moving to next song before 50% completion
   const handleNext = () => {
@@ -236,10 +324,9 @@ const AudioPlayer = () => {
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-dark-secondary border-t border-dark-tertiary">
+    <div className="fixed bottom-0 left-0 right-0 bg-dark-secondary border-t border-dark-tertiary z-50">
       <audio
         ref={audioRef}
-        onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
         onLoadedMetadata={(e) => {
           if (audioRef.current) {
@@ -310,6 +397,8 @@ const AudioPlayer = () => {
               className={`${
                 shuffle ? "text-primary" : "text-gray-400"
               } hover:text-white transition`}
+              disabled={!!roomId && !isHost}
+              title={roomId && !isHost ? "Shuffle disabled in livestream" : "Shuffle"}
             >
               <Shuffle size={20} />
             </button>
@@ -335,6 +424,8 @@ const AudioPlayer = () => {
             <button
               onClick={handleNext}
               className="text-gray-400 hover:text-white transition"
+              disabled={roomId && !isHost}
+              title={roomId && !isHost ? "Next disabled in livestream" : "Next"}
             >
               <SkipForward size={24} />
             </button>
@@ -344,6 +435,8 @@ const AudioPlayer = () => {
               className={`${
                 repeat ? "text-primary" : "text-gray-400"
               } hover:text-white transition`}
+              disabled={!!roomId && !isHost}
+              title={roomId && !isHost ? "Repeat disabled in livestream" : "Repeat"}
             >
               <Repeat size={20} />
             </button>
@@ -432,6 +525,7 @@ const AudioPlayer = () => {
               <button
                 onClick={handleNext}
                 className="text-gray-400 hover:text-white transition p-2"
+                disabled={roomId && !isHost}
               >
                 <SkipForward size={22} />
               </button>
@@ -453,9 +547,10 @@ const AudioPlayer = () => {
               <div className="flex items-center justify-around">
                 <button
                   onClick={toggleShuffle}
+                  disabled={!!roomId && !isHost}
                   className={`flex flex-col items-center space-y-1 ${
                     shuffle ? "text-primary" : "text-gray-400"
-                  } hover:text-white transition p-2`}
+                  } hover:text-white transition p-2 disabled:opacity-50`}
                 >
                   <Shuffle size={20} />
                   <span className="text-[10px]">Shuffle</span>
@@ -463,9 +558,10 @@ const AudioPlayer = () => {
 
                 <button
                   onClick={toggleRepeat}
+                  disabled={!!roomId && !isHost}
                   className={`flex flex-col items-center space-y-1 ${
                     repeat ? "text-primary" : "text-gray-400"
-                  } hover:text-white transition p-2`}
+                  } hover:text-white transition p-2 disabled:opacity-50`}
                 >
                   <Repeat size={20} />
                   <span className="text-[10px]">Repeat</span>
