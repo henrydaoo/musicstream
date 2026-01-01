@@ -71,6 +71,8 @@ spec:
           value: "http://user-service:3001"
         - name: ALBUM_SERVICE_URL
           value: "http://album-service:3003"
+        - name: GATEWAY_URL
+          value: "http://api-gateway:80"
         - name: CLOUDINARY_CLOUD_NAME
           valueFrom:
             secretKeyRef:

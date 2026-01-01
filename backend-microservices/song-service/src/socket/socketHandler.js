@@ -4,7 +4,7 @@ import { roomSet, roomGet, roomDel } from "../config/redis.js";
 export default function setupSocket(httpServer) {
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.FRONTEND_URL || "http://localhost:5173",
+      origin: process.env.GATEWAY_URL || "http://localhost:3000",
       credentials: true,
     },
   });
@@ -35,13 +35,13 @@ export default function setupSocket(httpServer) {
 
       await roomSet(roomId, roomData);
       socket.join(roomId);
-      
-      socket.emit("room-created", { 
-        roomId, 
-        playlist, 
-        isHost: true 
+
+      socket.emit("room-created", {
+        roomId,
+        playlist,
+        isHost: true,
       });
-      
+
       console.log(`Room ${roomId} created by ${userName}`);
     });
 
@@ -54,9 +54,13 @@ export default function setupSocket(httpServer) {
       }
 
       // Add member
-      room.members[userId] = { id: userId, name: userName, socketId: socket.id };
+      room.members[userId] = {
+        id: userId,
+        name: userName,
+        socketId: socket.id,
+      };
       await roomSet(roomId, room);
-      
+
       socket.join(roomId);
 
       // Calculate exact current state
@@ -74,7 +78,10 @@ export default function setupSocket(httpServer) {
         const playlist = room.playlist;
 
         // Check if we need to advance to next song
-        while (songIndex < playlist.length && calculatedTime >= playlist[songIndex].duration) {
+        while (
+          songIndex < playlist.length &&
+          calculatedTime >= playlist[songIndex].duration
+        ) {
           calculatedTime -= playlist[songIndex].duration;
           songIndex++;
         }
@@ -108,7 +115,11 @@ export default function setupSocket(httpServer) {
         memberCount,
       });
 
-      console.log(`${userName} joined room ${roomId}. Synced to song ${syncData.currentSongIndex} at ${syncData.currentTime.toFixed(2)}s`);
+      console.log(
+        `${userName} joined room ${roomId}. Synced to song ${
+          syncData.currentSongIndex
+        } at ${syncData.currentTime.toFixed(2)}s`
+      );
     });
 
     // HOST CONTROLS - PLAY
@@ -128,7 +139,11 @@ export default function setupSocket(httpServer) {
         currentTime,
       });
 
-      console.log(`Room ${roomId}: Playing song ${songIndex} at ${currentTime.toFixed(2)}s`);
+      console.log(
+        `Room ${roomId}: Playing song ${songIndex} at ${currentTime.toFixed(
+          2
+        )}s`
+      );
     });
 
     // HOST CONTROLS - PAUSE
@@ -165,27 +180,30 @@ export default function setupSocket(httpServer) {
     });
 
     // HOST CONTROLS - CHANGE SONG
-    socket.on("host-change-song", async ({ roomId, songIndex, currentTime = 0 }) => {
-      const room = await roomGet(roomId);
-      if (!room) return;
+    socket.on(
+      "host-change-song",
+      async ({ roomId, songIndex, currentTime = 0 }) => {
+        const room = await roomGet(roomId);
+        if (!room) return;
 
-      room.currentSongIndex = songIndex;
-      room.currentTime = currentTime;
+        room.currentSongIndex = songIndex;
+        room.currentTime = currentTime;
 
-      if (room.isPlaying) {
-        room.startTime = Date.now();
+        if (room.isPlaying) {
+          room.startTime = Date.now();
+        }
+
+        await roomSet(roomId, room);
+
+        socket.to(roomId).emit("sync-change-song", {
+          songIndex,
+          currentTime,
+          isPlaying: room.isPlaying,
+        });
+
+        console.log(`Room ${roomId}: Changed to song ${songIndex}`);
       }
-
-      await roomSet(roomId, room);
-
-      socket.to(roomId).emit("sync-change-song", {
-        songIndex,
-        currentTime,
-        isPlaying: room.isPlaying,
-      });
-
-      console.log(`Room ${roomId}: Changed to song ${songIndex}`);
-    });
+    );
 
     // MEMBER REQUEST SYNC
     socket.on("request-sync", async ({ roomId }) => {
@@ -205,7 +223,10 @@ export default function setupSocket(httpServer) {
         let songIndex = room.currentSongIndex;
         const playlist = room.playlist;
 
-        while (songIndex < playlist.length && calculatedTime >= playlist[songIndex].duration) {
+        while (
+          songIndex < playlist.length &&
+          calculatedTime >= playlist[songIndex].duration
+        ) {
           calculatedTime -= playlist[songIndex].duration;
           songIndex++;
         }
@@ -222,7 +243,11 @@ export default function setupSocket(httpServer) {
 
       socket.emit("sync-response", syncData);
 
-      console.log(`Sync requested in room ${roomId}. Sent: song ${syncData.songIndex} at ${syncData.currentTime.toFixed(2)}s`);
+      console.log(
+        `Sync requested in room ${roomId}. Sent: song ${
+          syncData.songIndex
+        } at ${syncData.currentTime.toFixed(2)}s`
+      );
     });
 
     // END ROOM
