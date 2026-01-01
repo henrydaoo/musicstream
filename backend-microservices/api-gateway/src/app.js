@@ -1,4 +1,7 @@
 import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import { io as ioClient } from "socket.io-client";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
@@ -6,7 +9,6 @@ import {
   register,
   httpRequestDuration,
   httpRequestTotal,
-  proxyErrors,
   activeRequests,
 } from "./config/metrics.js";
 
@@ -15,7 +17,114 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Create HTTP server first
+const httpServer = createServer(app);
+
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+
+// ============================================
+// WebSocket Gateway Setup
+// ============================================
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    credentials: true,
+  },
+  path: "/socket.io",
+});
+
+// Map để track client socket -> song service socket
+const clientToServiceSocket = new Map();
+
+io.on("connection", (clientSocket) => {
+  console.log("✅ Client connected to Gateway:", clientSocket.id);
+
+  // Tạo connection riêng đến Song Service cho mỗi client
+  const songServiceSocket = ioClient(
+    process.env.SONG_SERVICE_URL || "http://localhost:3002",
+    {
+      transports: ["websocket"],
+      autoConnect: true,
+    }
+  );
+
+  clientToServiceSocket.set(clientSocket.id, songServiceSocket);
+
+  songServiceSocket.on("connect", () => {
+    console.log(`🔗 Gateway socket ${clientSocket.id} -> Song Service ${songServiceSocket.id}`);
+  });
+
+  // Forward client events to Song Service
+  const forwardEvents = [
+    "create-room",
+    "join-room",
+    "host-play",
+    "host-pause",
+    "host-seek",
+    "host-change-song",
+    "request-sync",
+    "end-room",
+    "leave-room",
+  ];
+
+  forwardEvents.forEach((event) => {
+    clientSocket.on(event, (data) => {
+      console.log(`📤 Forwarding ${event} from client ${clientSocket.id}`);
+      songServiceSocket.emit(event, data);
+    });
+  });
+
+  // Forward Song Service responses to client
+  const responseEvents = [
+    "room-created",
+    "room-joined",
+    "sync-play",
+    "sync-pause",
+    "sync-seek",
+    "sync-change-song",
+    "sync-response",
+    "room-ended",
+    "member-joined",
+    "member-left",
+    "error",
+  ];
+
+  responseEvents.forEach((event) => {
+    songServiceSocket.on(event, (data) => {
+      console.log(`📥 Forwarding ${event} to client ${clientSocket.id}`);
+      clientSocket.emit(event, data);
+    });
+  });
+
+  // Handle disconnection
+  clientSocket.on("disconnect", () => {
+    console.log("❌ Client disconnected from Gateway:", clientSocket.id);
+    
+    // Cleanup: disconnect và remove song service socket
+    if (songServiceSocket && songServiceSocket.connected) {
+      songServiceSocket.disconnect();
+    }
+    clientToServiceSocket.delete(clientSocket.id);
+  });
+
+  songServiceSocket.on("disconnect", () => {
+    console.log(`🔌 Song Service socket disconnected for client ${clientSocket.id}`);
+  });
+
+  songServiceSocket.on("connect_error", (error) => {
+    console.error(`❌ Song Service connection error for client ${clientSocket.id}:`, error.message);
+    clientSocket.emit("error", { message: "Failed to connect to music service" });
+  });
+});
+
+// ============================================
+// HTTP Middleware & Routes
+// ============================================
 
 // Normalize route to avoid cardinality explosion
 const normalizeRoute = (path) => {
@@ -36,33 +145,6 @@ const getTargetService = (path) => {
   return "unknown";
 };
 
-app.use((req, res, next) => {
-  let service = "Unknown";
-  if (
-    req.path.startsWith("/api/auth") ||
-    req.path.startsWith("/api/users") ||
-    req.path.startsWith("/api/admin/users")
-  ) {
-    service = "User Service";
-  } else if (
-    req.path.startsWith("/api/songs") ||
-    req.path.startsWith("/api/admin/songs")
-  ) {
-    service = "Song Service";
-  } else if (
-    req.path.startsWith("/api/albums") ||
-    req.path.startsWith("/api/admin/albums")
-  ) {
-    service = "Album Service";
-  }
-  console.log(
-    `[${new Date().toISOString()}] ${req.method} ${
-      req.originalUrl
-    } -> ${service}`
-  );
-  next();
-});
-
 // Metrics middleware
 app.use((req, res, next) => {
   const start = Date.now();
@@ -74,9 +156,7 @@ app.use((req, res, next) => {
 
   // Log request
   console.log(
-    `[${new Date().toISOString()}] ${req.method} ${
-      req.originalUrl
-    } -> ${targetService}`
+    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} -> ${targetService}`
   );
 
   // Override res.end to capture metrics
@@ -116,6 +196,7 @@ app.get("/health", (req, res) => {
     status: "OK",
     service: "api-gateway",
     timestamp: new Date().toISOString(),
+    websocket: "enabled",
   });
 });
 
@@ -146,6 +227,7 @@ app.get("/health/services", async (req, res) => {
 
   res.json({
     gateway: "healthy",
+    websocket_clients: io.engine.clientsCount,
     services: healthChecks.map((result) => result.value),
   });
 });
@@ -242,17 +324,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Something went wrong!" });
 });
 
-app.listen(PORT, () => {
+// Start server
+httpServer.listen(PORT, () => {
   console.log(`🚀 API Gateway running on port ${PORT}`);
   console.log(`📊 Metrics available at http://localhost:${PORT}/metrics`);
   console.log(`🏥 Health check at http://localhost:${PORT}/health`);
-  console.log(
-    `User Service: ${process.env.USER_SERVICE_URL || "http://localhost:3001"}`
-  );
-  console.log(
-    `Song Service: ${process.env.SONG_SERVICE_URL || "http://localhost:3002"}`
-  );
-  console.log(
-    `Album Service: ${process.env.ALBUM_SERVICE_URL || "http://localhost:3003"}`
-  );
+  console.log(`🔌 WebSocket enabled at path: /socket.io`);
+  console.log(`\nServices:`);
+  console.log(`  User Service: ${process.env.USER_SERVICE_URL || "http://localhost:3001"}`);
+  console.log(`  Song Service: ${process.env.SONG_SERVICE_URL || "http://localhost:3002"}`);
+  console.log(`  Album Service: ${process.env.ALBUM_SERVICE_URL || "http://localhost:3003"}`);
 });

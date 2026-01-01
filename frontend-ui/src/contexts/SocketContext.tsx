@@ -13,7 +13,7 @@ export const SocketContextProvider = ({ children }) => {
   useEffect(() => {
     // Kết nối tới Song Service (Port 3002)
     // Lưu ý: Thay đổi URL nếu deploy lên server thật
-    const socketInstance = io("http://localhost:3002", {
+    const socketInstance = io(import.meta.env.VITE_API_URL || "http://localhost:3000", {
       transports: ["websocket"],
       autoConnect: true,
     });
