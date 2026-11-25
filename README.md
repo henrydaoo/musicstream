@@ -1,10 +1,10 @@
 # MusicStream – Cloud-Native Music Streaming Platform
 
-A modern, scalable music streaming application built with microservices architecture, featuring adaptive streaming, AI-powered recommendations, and real-time audio visualization.
+A microservices-based music streaming platform built around service separation, independent data ownership, distributed caching, and adaptive audio streaming.
 
 ## Overview
 
-MusicStream is a full-stack cloud-native music streaming platform that combines a React-based frontend with a microservices backend architecture. The platform offers personalized recommendations, adaptive audio quality, and immersive visualizations.
+MusicStream covers the design, implementation, deployment, and operation of a microservices-based music streaming platform. The central challenge is coordinating independent services and their data while maintaining efficient audio delivery, personalized music discovery, and reliable content management across the platform.
 
 ## Table of Contents
 
