@@ -1,12 +1,12 @@
-# CI/CD Setup Guide - DigitalOcean Kubernetes
+# CI/CD Setup Guide – DigitalOcean Kubernetes
 
-## 📋 Prerequisites
+## Prerequisites
 
-1. **GitHub Repository** với code của bạn
-2. **DigitalOcean Account** với:
-   - Kubernetes Cluster đã tạo
-   - Container Registry đã tạo
-   - Personal Access Token
+1. **GitHub Repository** containing your project code.
+2. **DigitalOcean Account** with:
+   - A Kubernetes Cluster already created.
+   - A Container Registry already created.
+   - A Personal Access Token.
 3. **Required Services:**
    - MongoDB Atlas
    - Redis Cloud
@@ -14,76 +14,87 @@
    - Cloudinary Account
    - Recombee Account (optional)
 
-## 🚀 Step-by-Step Setup
+## Step-by-Step Setup
 
-### Step 1: Tạo DigitalOcean Resources
+### Step 1: Create DigitalOcean Resources
 
-#### 1.1 Tạo Kubernetes Cluster
+#### 1.1 Create a Kubernetes Cluster
+
 ```bash
-# Qua DigitalOcean Dashboard:
+# Via DigitalOcean Dashboard:
 # 1. Click "Create" → "Kubernetes"
-# 2. Chọn region gần bạn nhất
-# 3. Chọn node plan (Basic: $12/month hoặc Professional)
-# 4. Đặt tên cluster: music-stream-cluster
+# 2. Select a region closest to your users
+# 3. Choose a node plan (Basic: $12/month or Professional)
+# 4. Name the cluster: music-stream-cluster
 # 5. Click "Create Cluster"
 ```
 
-#### 1.2 Tạo Container Registry
+#### 1.2 Create a Container Registry
+
 ```bash
-# Qua DigitalOcean Dashboard:
+# Via DigitalOcean Dashboard:
 # 1. Click "Create" → "Container Registry"
-# 2. Chọn plan (Basic: $5/month cho 500MB)
-# 3. Đặt tên: musicstream
+# 2. Choose a plan (Basic: $5/month for 500MB)
+# 3. Name the registry: musicstream
 # 4. Click "Create Registry"
 ```
 
-#### 1.3 Tạo Personal Access Token
+#### 1.3 Create a Personal Access Token
+
 ```bash
-# 1. Click vào Avatar → API
+# 1. Click your Avatar → API
 # 2. Click "Generate New Token"
-# 3. Đặt tên: github-actions-cicd
-# 4. Chọn scopes: read, write
-# 5. Copy token (chỉ hiển thị 1 lần!)
+# 3. Name the token: github-actions-cicd
+# 4. Select scopes: read, write
+# 5. Copy the token (it will only be displayed once!)
 ```
 
 ### Step 2: Configure GitHub Secrets
 
-Vào GitHub Repository → Settings → Secrets and variables → Actions → New repository secret
+Navigate to:
 
-Thêm các secrets sau:
+GitHub Repository → Settings → Secrets and variables → Actions → New repository secret
+
+Add the following secrets:
 
 #### DigitalOcean
-```
+
+```text
 DIGITALOCEAN_ACCESS_TOKEN: <your_do_access_token>
 ```
 
 #### MongoDB
-```
+
+```text
 MONGODB_USERS_URI: mongodb+srv://user:pass@cluster.mongodb.net/users_db?retryWrites=true&w=majority
 MONGODB_SONGS_URI: mongodb+srv://user:pass@cluster.mongodb.net/songs_db?retryWrites=true&w=majority
 MONGODB_ALBUMS_URI: mongodb+srv://user:pass@cluster.mongodb.net/albums_db?retryWrites=true&w=majority
 ```
 
 #### Redis
-```
+
+```text
 REDIS_URL: redis://default:password@redis-host:port
 ```
 
 #### Clerk
-```
+
+```text
 CLERK_SECRET_KEY: sk_test_xxxxxxxxxxxxxxxxxxxxx
 CLERK_PUBLISHABLE_KEY: pk_test_xxxxxxxxxxxxxxxxxxxxx
 ```
 
 #### Cloudinary
-```
+
+```text
 CLOUDINARY_CLOUD_NAME: your_cloud_name
 CLOUDINARY_API_KEY: your_api_key
 CLOUDINARY_API_SECRET: your_api_secret
 ```
 
 #### Recombee (Optional)
-```
+
+```text
 RECOMBEE_DATABASE_ID: musicstream-dev
 RECOMBEE_PRIVATE_TOKEN: your_private_token
 RECOMBEE_REGION: ap-se
@@ -91,11 +102,11 @@ RECOMBEE_REGION: ap-se
 
 ### Step 3: Add GitHub Actions Workflow
 
-Tạo file `.github/workflows/backend-cicd.yml` với nội dung từ artifact CI/CD Pipeline.
+Create the `.github/workflows/backend-cicd.yml` file using the content from the CI/CD Pipeline artifact.
 
-### Step 4: Setup Dockerfile cho từng service
+### Step 4: Set Up Dockerfiles for Each Service
 
-Đảm bảo mỗi service có Dockerfile. Ví dụ cho `user-service`:
+Ensure that each service has its own Dockerfile. Below is an example for `user-service`:
 
 ```dockerfile
 # backend-microservices/user-service/Dockerfile
@@ -124,7 +135,7 @@ CMD ["node", "src/app.js"]
 ### Step 5: Install DigitalOcean CLI (Local Testing)
 
 ```bash
-# MacOS
+# macOS
 brew install doctl
 
 # Linux
@@ -141,7 +152,7 @@ doctl auth init
 doctl account get
 ```
 
-### Step 6: Connect to Kubernetes Cluster (Local)
+### Step 6: Connect to the Kubernetes Cluster (Local)
 
 ```bash
 # List clusters
@@ -155,7 +166,7 @@ kubectl cluster-info
 kubectl get nodes
 ```
 
-### Step 7: Initial Manual Deployment (First Time)
+### Step 7: Perform Initial Manual Deployment (First Time)
 
 ```bash
 cd backend-microservices
@@ -200,19 +211,21 @@ kubectl wait --for=condition=available --timeout=300s \
 kubectl get all -n music-stream
 ```
 
-### Step 8: Configure DNS (nip.io hoặc Custom Domain)
+### Step 8: Configure DNS (nip.io or Custom Domain)
 
-#### Option A: Using nip.io (Free, for testing)
+#### Option A: Using nip.io (Free, for Testing)
+
 ```bash
 # Get LoadBalancer IP
 kubectl get svc -n ingress-nginx
 
-# Update ingress.yaml với IP
+# Update ingress.yaml with the IP
 # api.YOUR_IP.nip.io
 # grafana.YOUR_IP.nip.io
 ```
 
-#### Option B: Custom Domain
+#### Option B: Using a Custom Domain
+
 ```bash
 # Get LoadBalancer IP
 LOAD_BALANCER_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
@@ -222,15 +235,15 @@ LOAD_BALANCER_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o 
 # grafana.yourdomain.com → LOAD_BALANCER_IP
 ```
 
-### Step 9: Trigger First CI/CD Deploy
+### Step 9: Trigger the First CI/CD Deployment
 
 ```bash
-# Commit và push code
+# Commit and push your code
 git add .
 git commit -m "feat: setup CI/CD pipeline"
 git push origin main
 
-# Theo dõi workflow trên GitHub Actions tab
+# Monitor the workflow in the GitHub Actions tab
 ```
 
 ### Step 10: Verify Deployment
@@ -252,30 +265,33 @@ kubectl get ingress -n music-stream
 curl https://api.YOUR_IP.nip.io/health/services
 ```
 
-## 📊 Monitoring
+## Monitoring
 
 ### Access Grafana Dashboard
-```
+
+```text
 URL: https://grafana.YOUR_IP.nip.io
 Username: admin
 Password: admin123
 ```
 
 ### View Logs
+
 ```bash
-# Real-time logs cho một service
+# Stream real-time logs for a service
 kubectl logs -f deployment/song-service -n music-stream
 
-# Logs của pod cụ thể
+# View logs for a specific pod
 kubectl logs <pod-name> -n music-stream
 
-# Logs của tất cả pods
+# View logs for all pods
 kubectl logs -l app=song-service -n music-stream
 ```
 
 ### Check Resource Usage
+
 ```bash
-# CPU và Memory usage
+# CPU and Memory usage
 kubectl top nodes
 kubectl top pods -n music-stream
 
@@ -283,14 +299,15 @@ kubectl top pods -n music-stream
 kubectl get hpa -n music-stream
 ```
 
-## 🔄 Common Operations
+## Common Operations
 
 ### Manual Rollback
+
 ```bash
-# Rollback một deployment
+# Roll back a deployment
 kubectl rollout undo deployment/song-service -n music-stream
 
-# Rollback về version cụ thể
+# Roll back to a specific revision
 kubectl rollout undo deployment/song-service --to-revision=2 -n music-stream
 
 # Check rollout history
@@ -298,6 +315,7 @@ kubectl rollout history deployment/song-service -n music-stream
 ```
 
 ### Scale Services Manually
+
 ```bash
 # Scale up
 kubectl scale deployment song-service --replicas=3 -n music-stream
@@ -307,6 +325,7 @@ kubectl scale deployment song-service --replicas=1 -n music-stream
 ```
 
 ### Update Secrets
+
 ```bash
 # Update MongoDB URI
 kubectl create secret generic mongodb-secret \
@@ -314,22 +333,24 @@ kubectl create secret generic mongodb-secret \
   --namespace=music-stream \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# Restart deployment để apply secret mới
+# Restart deployment to apply the updated secret
 kubectl rollout restart deployment/song-service -n music-stream
 ```
 
 ### Delete Everything
+
 ```bash
-# Delete namespace (xóa tất cả resources)
+# Delete the namespace (removes all resources)
 kubectl delete namespace music-stream
 
-# Hoặc xóa từng loại
+# Or delete resources individually
 kubectl delete -f k8s/
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Pods không start
+### Pods Fail to Start
+
 ```bash
 # Check pod status
 kubectl describe pod <pod-name> -n music-stream
@@ -341,12 +362,13 @@ kubectl get events -n music-stream --sort-by='.lastTimestamp'
 kubectl logs <pod-name> -n music-stream
 ```
 
-### ImagePullBackOff error
+### ImagePullBackOff Error
+
 ```bash
-# Check secret
+# Check the secret
 kubectl get secret regcred -n music-stream -o yaml
 
-# Recreate secret
+# Recreate the secret
 kubectl delete secret regcred -n music-stream
 kubectl create secret docker-registry regcred \
   --docker-server=registry.digitalocean.com \
@@ -355,42 +377,46 @@ kubectl create secret docker-registry regcred \
   --namespace=music-stream
 ```
 
-### Service không accessible
+### Service Is Not Accessible
+
 ```bash
-# Check service
+# Check services
 kubectl get svc -n music-stream
 
 # Check endpoints
 kubectl get endpoints -n music-stream
 
-# Port forward để test local
+# Port-forward to test locally
 kubectl port-forward svc/api-gateway 3000:80 -n music-stream
 curl http://localhost:3000/health
 ```
 
 ### SSL Certificate Issues
+
 ```bash
-# Check certificate
+# Check certificates
 kubectl get certificate -n music-stream
 
-# Check certificate details
+# Inspect certificate details
 kubectl describe certificate music-stream-tls -n music-stream
 
 # Check cert-manager logs
 kubectl logs -n cert-manager deployment/cert-manager
 ```
 
-## 📈 Performance Optimization
+## Performance Optimization
 
 ### Enable HPA Metrics
+
 ```bash
-# Install metrics server nếu chưa có
+# Install metrics server if it is not already installed
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 ```
 
-### Optimize Resource Requests/Limits
+### Optimize Resource Requests and Limits
+
 ```yaml
-# Trong deployment files
+# In deployment files
 resources:
   requests:
     memory: "128Mi"
@@ -400,24 +426,25 @@ resources:
     cpu: "200m"
 ```
 
-## 🔒 Security Best Practices
+## Security Best Practices
 
-1. **Luôn sử dụng secrets cho sensitive data**
-2. **Enable RBAC cho Kubernetes**
-3. **Sử dụng non-root user trong containers**
-4. **Scan images trước khi deploy**
-5. **Rotate credentials định kỳ**
-6. **Enable network policies**
-7. **Use SSL/TLS cho tất cả endpoints**
+1. **Always use Secrets for sensitive data.**
+2. **Enable RBAC for Kubernetes.**
+3. **Run containers with non-root users.**
+4. **Scan images before deployment.**
+5. **Rotate credentials regularly.**
+6. **Enable network policies.**
+7. **Use SSL/TLS for all endpoints.**
 
-## 💡 Tips & Tricks
+## Tips & Tricks
 
 ### Fast Development Workflow
+
 ```bash
 # Watch deployment changes
 kubectl get pods -n music-stream -w
 
-# Stream logs của nhiều pods
+# Stream logs from multiple pods
 kubectl logs -f -l app=song-service -n music-stream
 
 # Quick restart
@@ -425,30 +452,33 @@ kubectl rollout restart deployment/song-service -n music-stream
 ```
 
 ### CI/CD Performance
-- Sử dụng Docker layer caching
-- Build parallel cho nhiều services
-- Sử dụng artifact caching
-- Optimize Dockerfile với multi-stage builds
+
+- Use Docker layer caching.
+- Build multiple services in parallel.
+- Use artifact caching.
+- Optimize Dockerfiles with multi-stage builds.
 
 ### Cost Optimization
-- Sử dụng appropriate node sizes
-- Enable cluster autoscaler
-- Set proper resource limits
-- Use spot instances cho non-production
-- Monitor và adjust HPA thresholds
 
-## 📚 Additional Resources
+- Use appropriately sized nodes.
+- Enable cluster autoscaler.
+- Set proper resource limits.
+- Use spot instances for non-production environments.
+- Monitor and adjust HPA thresholds.
+
+## Additional Resources
 
 - [DigitalOcean Kubernetes Documentation](https://docs.digitalocean.com/products/kubernetes/)
 - [Kubernetes Best Practices](https://kubernetes.io/docs/concepts/configuration/overview/)
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [cert-manager Documentation](https://cert-manager.io/docs/)
 
-## 🆘 Support
+## Support
 
-Nếu gặp vấn đề:
-1. Check GitHub Actions logs
-2. Check Kubernetes events: `kubectl get events -n music-stream`
-3. Check pod logs: `kubectl logs <pod-name> -n music-stream`
-4. Review DigitalOcean dashboard
+If you encounter any issues:
+
+1. Check GitHub Actions logs.
+2. Check Kubernetes events: `kubectl get events -n music-stream`.
+3. Check pod logs: `kubectl logs <pod-name> -n music-stream`.
+4. Review the DigitalOcean dashboard.
 5. Check service health: `curl https://api.YOUR_IP.nip.io/health/services`
